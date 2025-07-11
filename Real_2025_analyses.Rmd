@@ -1,0 +1,4308 @@
+---
+title: "Real_etal_2025_Stress"
+author: "Madalena V. F. Real"
+date: "2025-02-14"
+output: html_document
+---
+
+Reproducibility code for VF Real, Madalena, et al. "The mouse gut microbiota responds to predator odor and predicts host behavior." bioRxiv (2025): 2025-07. https://doi.org/10.1101/2025.07.01.662568 
+
+# Setup
+```{r setup, include=FALSE, message=FALSE, warning=FALSE}
+
+# Remove the variables in the working environment
+rm(list = ls())
+
+# Set working directory to appropriate location
+setwd("C:/path/to/directory")
+wd = getwd()
+
+# Set seed for reproducibility
+set.seed(555)
+
+```
+
+## Load packages
+```{r load packages, message=FALSE, warning=FALSE}
+
+# List packages
+packages <- c("ggplot2",
+              "ggtree",
+              "ggtreeExtra",
+              "ggforce",
+              "ggnewscale",
+              "ape", 
+              "plyr", 
+              "grid", 
+              "reshape2",
+              "gridExtra", 
+              "cowplot", 
+              "vegan",
+              "dplyr",
+              "ggrepel",
+              "magrittr",
+              "RColorBrewer",
+              "foreach",
+              "Biostrings",
+              "phyloseq",
+              "DESeq2",
+              "picante",
+              "tidyverse",
+              "ggpubr",
+              "rstatix",
+              "nlme",
+              "compositions",
+              "ANCOMBC",
+              "lmerTest",
+              "Maaslin2",
+              "writexl",
+              "openxlsx",
+              "microbiome",
+              "taxize",
+              "rentrez",
+              "data.table",
+              'RVAideMemoire',
+              "readxl",
+              "coda",
+              "MuMIn",
+              "rsq",
+              "GGally",
+              "ComplexHeatmap",
+              "randomForest",
+              "beepr",
+              "multcomp",
+              "lme4",
+              "DHARMa",
+              "ashr",
+              "clusterProfiler",
+              "org.Mm.eg.db",
+              "VennDiagram",
+              "ggvenn",
+              "ggVennDiagram",
+              "caret",
+              "e1071",
+              "microbiomeMarker",
+              "WGCNA",
+              "patchwork",
+              "treeio",
+              "paletteer")
+
+
+# Install necessary packages from bioconductor
+BiocManager::install(setdiff(packages,installed.packages()), update=F, force = TRUE)
+
+# Load packages
+all_packages <- c(packages)
+
+n <- length(all_packages) - sum(sapply(all_packages,require,character.only=TRUE))
+
+failed_packages <- character(0)  # Initialize an empty vector to store failed package names
+
+for (pkg in all_packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    failed_packages <- c(failed_packages, pkg)
+  }
+}
+
+if (length(failed_packages) == 0) {
+  print("All necessary R packages loaded properly")
+} else {
+  print(paste0("The following ", length(failed_packages), " R packages did not load properly:"))
+  print(failed_packages)
+}
+
+```
+
+## Define palette
+```{r define palette}
+# Define Palette
+
+Treatment_color_pal <- c("steelblue2", "gold2", "deeppink3", "sienna2")
+names(Treatment_color_pal) <- c("Pair_H2O", "Pair_TMT", "Single_H2O", "Single_TMT")
+
+Housing_color_pal <- c("steelblue1", "deeppink3")
+names(Housing_color_pal) <- c("Pair", "Single")
+
+TMT_color_pal <- c("steelblue3", "gold2")
+names(TMT_color_pal) <- c("H2O", "TMT")
+
+Timepoint_shape_pal <- c(24, 21, 23, 22)
+names(Timepoint_shape_pal) <- c("D0", "D15", "D22", "D30")
+
+Sex_shape_pal <- c(24, 22)
+names(Sex_shape_pal) <- c("Male", "Female")
+
+Profile_shape_pal <- c(24, 22)
+names(Profile_shape_pal) <- c("Taxonomic", "Transcriptomic")
+
+# Taxonomic palettes
+rank_colors = list()
+rank = "Class"
+
+# Generate palette
+rank_color = paletteer_c("grDevices::Zissou 1", n_distinct(SGB_tt[[rank]]))
+
+# Define manual colors for specific ranks
+color_names <- list(
+    "Class" = c("Clostridia", "Vampirovibrionia", "Bacilli_A", "Bacilli", "Campylobacteria", 
+                "Desulfovibrionia", "Bacteroidia", "Coriobacteriia"))
+names(rank_color) <- color_names[[rank]]
+  
+# Save palette
+rank_colors[[rank]] = rank_color
+
+
+
+```
+
+# Behavior
+Investigate the effects of brief predator odor exposure (H2O vs. TMT) or prolonged social isolation (Pair- vs. Single-housing) on the behavior of wild-derived male and female mice.
+
+## Import data
+```{r import behavioral data}
+
+# Import data
+behav_df <- read.table(paste0(wd,"/Behavior_data.txt"), header = TRUE, sep = "\t")
+
+# Define factors
+factors <- c("Mouse_ID", "Sex", "Litter", "Cage_ID", "Housing", "TMT", "Treatment")
+behav_df[factors] <- lapply(behav_df[factors], as.factor)
+behav_df$Sex <- factor(behav_df$Sex, levels = c("Male", "Female"))
+
+# List behaviors
+behav_pheno = c("Total_locomotion", "Center_occupancy",  "Grooming_duration", "Social_preference")
+          
+```
+
+## Check normality
+Confirm that the measured behavior phenotypes are normally distributed before conducting further statistical analyses.
+
+```{r normality}
+
+# Initialize dataframe to store results
+norm_plot = list()
+
+norm_skew_stats <- data.frame(
+  Behavior = character(),
+  Shapiro_W = numeric(),
+  Shapiro_p_value = numeric(),
+  Skewness = numeric(),
+  Normality = character(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through behavior phenotypes
+for (pheno in behav_pheno) {
+  # Check if the column exists in the dataframe
+  if (pheno %in% colnames(behav_df)) {
+    # Extract the data for the phenotype
+    data <- behav_df[[pheno]]
+    
+    # Density plot
+    ## The density plot provides a visual judgment about whether the distribution is bell shaped.
+    p = ggdensity(behav_df[,pheno])
+    norm_plot[[paste0(pheno,"_density")]] = p
+    
+    # Q-Q plot
+    ## The quantile-quantile plot draws the correlation between a given sample and the normal distribution
+    ## If points fall approximately along this 45º reference line, we can assume normality
+    p = ggqqplot(behav_df[,pheno])
+    norm_plot[[paste0(pheno,"_qqplot")]] = p
+    
+    # Shapiro-Wilk normality test
+    ## The null hypothes is the “sample distribution is normal”
+    ## If the test is significant, the distribution is non-normal
+    sw_test <- shapiro.test(data)
+    
+    # Determine normality based on Shapiro-Wilk p-value
+    normality <- ifelse(sw_test$p.value < 0.01, "Non-normal", "Normal")
+    
+    # Calculate skewness
+    ## High skewness (e.g., > |1|) indicates an unbalanced distribution
+    skew_value <- skewness(data, na.rm = TRUE)
+    
+    # Save results
+    norm_skew_stats <- rbind(
+      norm_skew_stats,
+      data.frame(
+        Behavior = pheno,
+        Shapiro_W = sw_test$statistic,
+        Shapiro_p_value = sw_test$p.value,
+        Skewness = skew_value,
+        Normality = normality,
+        stringsAsFactors = FALSE
+      )
+    )
+  } else {
+    warning(paste("Phenotype", pheno, "not found in behav_df"))
+  }
+}
+
+# Visualize results
+print(norm_skew_stats)
+
+```
+Total locomotion is not normal and the data is also very skewed (> |1|). Thus we will log-transform total locomotion before conducting analyses that assume normality (e.g. linear mixed effects models).
+
+
+## Stressor effect
+Test the effect of the stressors (predator odor and/or social isolation) on mouse behavior.
+
+```{r stressor effect}
+
+# Define where to store results
+model_fit = list()
+stats = data.frame(
+    Behavior = factor(),
+    contrast = factor(),
+    estimate = numeric(),
+    SE = numeric(),
+    DF = numeric(),
+    t.value = numeric(),
+    p.value = numeric()
+  )
+stats_pair = stats
+behavior_boxplots = list()
+
+for (pheno in behav_pheno) {
+  tryCatch({
+      
+      # Prepare behavioral data
+      df = behav_df
+      
+      df[,pheno] = df[,pheno] + 1e-13 # add small value to avoid 0's
+      
+      # Log-transform non-normal behaviors (i.e., total locomotion)
+      if (pheno == "Total_locomotion") {
+        df[, pheno] <- log(df[, pheno])
+      }
+          
+      # Fit mixed effects model
+      set.seed(555)
+      formula <- formula(paste0(pheno," ~ Sex + Housing * TMT + (1|Litter/Cage_ID)"))
+      model = lmer(formula, data = df)
+      summary(model)
+            
+      # Check model fit
+      ## Residuals should ideally be randomly distributed
+      resplot = plot(resid(model)~ predict(model))
+      model_fit[[pheno]][["residuals"]] = resplot
+
+      # Q-Q plot
+      qqplot = qqnorm(resid(model))
+      model_fit[[pheno]][["qqplot"]] = qqplot
+       
+      # Save results
+      res = as.data.frame(summary(model)[["coefficients"]])
+      colnames(res) = c("estimate", "SE", "DF", "t.value", "p.value")
+      res <- res %>%
+        mutate(Behavior = pheno, contrast = rownames(res))
+      res$Sig.p.value = ifelse(res$p.value < 0.05, TRUE, FALSE)
+      stats <- bind_rows(stats, res)
+            
+          
+      # Perform pairwise tests
+      
+      # Define contrast matrix
+      comp <- rbind("Pair_H2O - Pair_TMT" = c(1, -1, 0, 0),
+                    "Pair_H2O - Single_H2O" = c(1, 0, -1, 0),
+                    "Pair_H2O - Single_TMT" = c(1, 0, 0, -1),
+                    "Pair_TMT - Single_H2O" = c(0, 1, -1, 0),
+                    "Pair_TMT - Single_TMT" = c(0, 1, 0, -1),
+                    "Single_H2O - Single_TMT" = c(0, 0, 1, -1))
+      
+      # Run pairwise comparisons
+      set.seed(555)
+      formula <- formula(paste0(pheno," ~ Sex + Treatment + (1|Litter/Cage_ID)"))
+      model = lmer(formula, data = df)
+      pairwise = glht(model, linfct = mcp(Treatment = comp))
+      summary(pairwise)
+      
+      # Save results
+      ci = confint(pairwise)[["confint"]]
+      res_pair = data.frame(Behavior = pheno,
+                            estimate = summary(pairwise)[["test"]][["coefficients"]],
+                            SE = summary(pairwise)[["test"]][["sigma"]],
+                            t.value = summary(pairwise)[["test"]][["tstat"]],
+                            p.value = summary(pairwise, test = adjusted("none"))[["test"]][["pvalues"]],
+                            Upr_CI = ci[, "upr"],
+                            Lwr_CI = ci[, "lwr"])
+      res_pair$contrast = rownames(res_pair)
+      res_pair$Sig.p.value = ifelse(res_pair$p.value < 0.05, TRUE, FALSE)
+      stats_pair <- bind_rows(stats_pair, res_pair)
+      
+      # Box Plot
+          p <- ggplot(df, aes_string(x = "Treatment", y = pheno, fill = "Treatment"))
+          p <- p + geom_hline(yintercept = df[df$Treatment == "Pair_H2O", pheno] %>% mean(), linetype = "dashed", color = "grey")
+          p <- p + geom_boxplot(show.legend = FALSE, outlier.shape = NA, width=0.15)
+          p <- p + geom_sina(aes_string(fill = "Treatment", shape = "Sex"), size=2, alpha = 0.5, show.legend = FALSE)
+          p <- p + scale_fill_manual(values = Treatment_color_pal)
+          p <- p + scale_shape_manual(values = Sex_shape_pal)
+          p <- p + xlab("")
+          p <- p + ylab(sub("_", " ", pheno))
+          p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5))
+          p
+
+        # Save plot
+        behavior_boxplots[[pheno]] = p
+          
+            
+  }, error = function(e) {
+    message(paste("Error fitting model for", pheno, "and", group, ":", e$message))
+  })
+}
+beep()
+
+#Save results
+stats_behav = list()
+stats_behav[["stats"]] = stats
+stats_behav[["stats_pair"]] = stats_pair
+
+# Visualize results
+print(stats_behav[["stats"]])
+print(stats_behav[["stats_pair"]])
+
+behavior_boxplots[["Center_occupancy"]]
+behavior_boxplots[["Grooming_duration"]]
+behavior_boxplots[["Social_preference"]]
+```
+
+### Plot social interaction
+
+In addition to assessing if mice exposed to different stressor treatments differed in their social preference index (SPI), we want to test if the groups displayed a significant social preference (SPI is significantly different than zero and mice spend significanlty more time interacting with the social stimulus (stranger mouse) than the non-social stimulus (empty cup)).
+
+```{r social interaction}
+
+# Test if social preference for each group is significantly different than 0
+behav_df %>%
+  group_by(Treatment) %>%
+  summarise(
+    t_test_p = t.test(Social_preference, mu = 0)$p.value,
+    wilcox_p = wilcox.test(Social_preference, mu = 0)$p.value
+  )
+
+
+# Plot the social interaction vs non-social interacion time
+
+# Prepare data
+df <- behav_df %>%
+  pivot_longer(cols = c(Social_interaction_time, Non_social_interaction_time), 
+               names_to = "Interaction", values_to = "Duration") %>%
+  mutate(Interaction = recode(Interaction, 
+                           Social_interaction_time = "Social", 
+                           Non_social_interaction_time = "Non-social"))
+df$Interaction = as.factor(df$Interaction)
+
+# Box Plot
+p <- ggplot(df, aes(x = Interaction, y = Duration, fill = Treatment))
+p <- p + geom_boxplot(show.legend = FALSE, outlier.shape = NA, width=0.25)
+p <- p + geom_sina(aes_string(fill = "Treatment", shape = "Sex"), size=2, alpha = 0.5, show.legend = FALSE)
+p <- p + facet_grid( ~ Treatment)
+p <- p + stat_compare_means(aes(group = Interaction), label = "p.format", method = "wilcox.test", paired = T) 
+p <- p + scale_fill_manual(values = Treatment_color_pal)
+p <- p + scale_shape_manual(values = Sex_shape_pal)
+p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5))
+p
+
+```
+
+# Transcriptome
+Investigate the effects of brief predator odor exposure (H2O vs. TMT) or prolonged social isolation (Pair- vs. Single-housing) on the gene expression patterns in the adrenal glands (Adr) and visceral adipose tissue (VAT) of wild-derived male and female mice.
+
+## Import data
+```{r import transcriptomic data}
+
+# Metadata
+md = behav_df[,1:7]
+rownames(md) = md$Mouse_ID
+
+
+# Import ReadsPerGene STAR output generated using RNAseq_data_processing.sh
+samples = md$Mouse_ID
+
+# Define funtion to import transcriptomic data 
+
+import_data <- function(wd, samples, tissue, exclude_samples) {
+  
+  # Initialize empty data frame
+  table <- read.table(paste0(wd, "/", tissue, "_STAR_ReadsPerGene_untrimmed/", tissue, "_", samples[1], ".ReadsPerGene.out.tab"), row.names = 1, skip = 4)
+  raw_counts <- data.frame(row.names = row.names(table))
+  
+  # Loop over the samples to import data
+  for(sample in samples) {
+    file_path <- paste0(wd, "/", tissue, "_STAR_ReadsPerGene_untrimmed/", tissue, "_", sample, ".ReadsPerGene.out.tab")
+    
+    if (file.exists(file_path)) {
+      sample_table <- read.table(file_path, row.names = 1, skip = 4)
+      raw_counts[sample] <- sample_table[row.names(raw_counts), "V2"]
+    } else {
+    }
+  }
+  
+  # Remove low quality or outlier samples
+  raw_counts <- raw_counts[, setdiff(colnames(raw_counts), exclude_samples)]
+  
+  return(raw_counts)
+}
+
+# Import adrenal data (without low quality samples (<1M reads) and outliers (617))
+cts_adr <- import_data(wd, samples, "Adr", c("2029", "614", "617")) 
+
+# Format Adr metadata
+md_adr <- md[intersect(rownames(md), colnames(cts_adr)), c("Sex", "Litter", "Cage_ID", "Housing", "TMT", "Treatment")]
+
+# Import VAT data (without low quality samples (<1M reads) and outliers (608))
+cts_vat <- import_data(wd, samples, "VAT", c("594", "605", "596", "643", "601", "600", "597", "2029", "608"))
+
+# Format VAT metadata
+md_vat <- md[intersect(rownames(md), colnames(cts_vat)), c("Sex", "Litter", "Cage_ID", "Housing", "TMT", "Treatment")]
+
+
+# Store transcriptomic data
+transcriptomes <- list(
+  Adr = list(counts = cts_adr, metadata = md_adr),
+  VAT = list(counts = cts_vat, metadata = md_vat)
+)
+
+```
+
+## DESeq2
+Please note that the DESeq2 model internally corrects for library size, so transformed or normalized values such as counts scaled by library size should not be used as input.
+
+### Outliers
+Identify and remove outlier samples (outside 2 standard deviations from the mean coordinates in PC1 or PC2).
+
+```{r remove outliers}
+
+for (tissue in c("Adr", "VAT")) {
+  # Load data
+  md_s = transcriptomes[[tissue]][["metadata"]]
+  cts = transcriptomes[[tissue]][["counts"]]
+  
+  # Create a DESeq data object
+  dds <- DESeqDataSetFromMatrix(countData = cts,
+                                colData = md_s,
+                                design = ~ Sex + Housing * TMT + Litter)
+  # Filter low count genes
+  ## Keep only genes with at least 1 count in 3 or more samples (min group size)
+  idx <- rowSums(counts(dds, normalized=FALSE) >= 1) >= 3
+  dds.f <- dds[idx, ]
+
+  # Estimate dispersions
+  dds.f <- DESeq(dds.f)
+    
+  # Variance stabilizing transformation (to control for differences in library size)
+  rld = rlog(dds.f, blind=FALSE)
+  
+  # Plot PCA
+  plotPCA(rld, intgroup="Treatment") + 
+    geom_label(aes(x=PC1,y=PC2,label=name)) +
+    theme_minimal()
+
+  # Check for outliers
+  pca_data <- plotPCA(rld, intgroup="Treatment", returnData=TRUE)
+
+  ## Calculate mean and standard deviation for PC1 and PC2
+  mean_pc1 <- mean(pca_data$PC1)
+  sd_pc1 <- sd(pca_data$PC1)
+  mean_pc2 <- mean(pca_data$PC2)
+  sd_pc2 <- sd(pca_data$PC2)
+
+  ## Define the range for outliers (mean ± 2 * SD)
+  lower_bound_pc1 <- mean_pc1 - 2 * sd_pc1
+  upper_bound_pc1 <- mean_pc1 + 2 * sd_pc1
+  lower_bound_pc2 <- mean_pc2 - 2 * sd_pc2
+  upper_bound_pc2 <- mean_pc2 + 2 * sd_pc2
+  
+  # Check if each sample is within the 2 SD range for PC1 and PC2
+  pca_data$outlier_pc1 <- (pca_data$PC1 < lower_bound_pc1) | (pca_data$PC1 > upper_bound_pc1)
+  pca_data$outlier_pc2 <- (pca_data$PC2 < lower_bound_pc2) | (pca_data$PC2 > upper_bound_pc2)
+  
+  # Identify outliers (either in PC1 or PC2)
+  pca_data$outlier <- pca_data$outlier_pc1 | pca_data$outlier_pc2
+  outliers <- pca_data[pca_data$outlier, ]
+  
+  cat(paste0(tissue, " tissue outliers: ", rownames(outliers),"\n"))
+  
+  # Store counts and metadata without outliers
+  transcriptomes[[tissue]][["counts"]] = cts[, !(colnames(cts) %in% rownames(outliers))]
+  transcriptomes[[tissue]][["metadata"]] = md_s[!(rownames(md_s) %in% rownames(outliers)),]
+}
+
+```
+
+### Estimate dispersions
+Create a list of DESeq objects for each tissue.
+
+```{r estimate dispersions}
+
+# Create dataframes to store results
+DESeq_obj = list()
+
+for (tissue in c("Adr", "VAT")) {
+  
+  # Load data
+  md = transcriptomes[[tissue]][["metadata"]]
+  cts = transcriptomes[[tissue]][["counts"]]
+  
+  # Create a DESeq data object
+  dds <- DESeqDataSetFromMatrix(countData = cts,
+                                colData = md,
+                                design = ~ Sex + Housing * TMT + Litter)
+  cat(paste0(tissue, " tissue has ", dim(dds)[1], " unique genes across ", dim(dds)[2], " samples.\n"))
+  
+  # Filter low count genes
+  ## Keep only genes with at least 1 count in 3 or more samples (min group size)
+  idx <- rowSums(counts(dds, normalized=FALSE) >= 1) >= 3
+  dds.f <- dds[idx, ]
+  cat(paste0(tissue, " tissue has ", dim(dds.f)[1], " filtered genes across ", dim(dds.f)[2], " samples.\n"))
+
+  # Estimate dispersions
+  dds.f <- DESeq(dds.f)
+  
+  # Save DESeq objects
+  DESeq_obj[[tissue]] = dds.f
+} 
+
+```
+
+### Normalized counts
+Extract normalized gene expression data. 
+```{r estimate dispersions}
+
+# Create dataframes to store results
+normalized_counts = list()  # To store normalized expression matrices for each tissue
+
+tissue = "VAT"
+
+for (tissue in c("Adr", "VAT")) {
+  # Load DESeq object
+  dds.f = DESeq_obj[[tissue]]
+  md = transcriptomes[[tissue]][["metadata"]]
+  
+  # Extract the normalized counts
+  cts = as.data.frame(counts(dds.f, normalized=TRUE))
+  
+  
+  # Add gene names
+  cts$Gene = rownames(cts)
+  cts = cts[, c("Gene", colnames(cts)[1:(ncol(cts)-1)])]
+  
+  # Save
+  normalized_counts[[tissue]] = cts
+  
+  # Save the normalized expression matrix to a file
+  write.table(cts, file = paste0(wd,"/",tissue,"_normalized_counts.txt"), sep = "\t", row.names = F, col.names = TRUE)
+} 
+
+```
+
+### Dissimilarity
+Investigate whether predator odor exposure or social isolation changed overall adrenal or VAT gene expression patterns.
+
+```{r transcriptomic dissimilarity}
+
+stats <- data.frame(
+  Tissue = factor(), 
+  Test = factor(), 
+  Factor = factor()
+  )
+trans_pcoas = list()
+
+tissue = "VAT"
+
+for (tissue in c("Adr", "VAT")) {
+  
+  # Load DESeq object
+  dds.f = DESeq_obj[[tissue]]
+  md = transcriptomes[[tissue]][["metadata"]]
+    
+  # Variance stabilizing transformation (to control for differences in library size)
+  ## We used rlog() instead of vst() because it is more robust in the case when the size factors vary widely.
+  rld = rlog(dds.f, blind=FALSE)
+  
+  # Calculate distance matrix
+  dist <- vegdist(t(assay(rld)), method = "euclidean")
+
+  # Ordinate PCoA
+  ord_PCoA <- cmdscale(dist, eig = TRUE, k = 4)
+
+  # Calculate variation explained by each PC
+  total_var <- sum(ord_PCoA$eig[ord_PCoA$eig > 0])
+  PC1 <- round((ord_PCoA$eig[1]/total_var)*100, 1)
+  PC2 <- round((ord_PCoA$eig[2]/total_var)*100, 1)
+
+  # Put ordination results in dataframe with metadata
+  df <- cbind(ord_PCoA$points, md)
+  colnames(df)[1:4] = paste0("PC", 1:4)
+  df$Mouse_ID = rownames(df)
+  df$Sample_ID = paste0(df$Mouse_ID,"_T5")
+  
+  # Export transcriptomic data
+  write.table(df, file = paste0(wd,"/",tissue,"_T5_data.txt"), sep = "\t", row.names = F, col.names = TRUE)
+  
+
+  #PERMANOVA
+  set.seed(555)
+  res <- adonis2(dist ~ Sex + Litter + Housing + TMT, data = df,
+                 permutations = 999, by = "margin", parallel = 4, na.action = na.exclude)
+
+  # Save results
+  colnames(res)[4:5] = c("F.stat","p.value")
+  res <- res %>%
+    mutate(Tissue = tissue, Test = "PERMANOVA", Factor = rownames(res))
+
+  # PERMDISP
+  res_disp = list()
+  for (group in c("Housing", "TMT")) {
+    set.seed(555)
+    res2 <- permutest(betadisper(dist, df[,group]), pairwise = FALSE, permutations = 999)
+
+    # Save results
+    res2 <- res2$tab # get stats
+    res2 <- res2[,-5] # remove N.Perm column
+    rownames(res2)[1] <- group # rename row
+    rownames(res2)[2] <- paste0(group,":",rownames(res2)[2]) # rename row
+    colnames(res2) <- colnames(res)[1:5] # give columns same name as PERMANOVA results
+    res2 <- res2 %>%
+      mutate(Tissue = tissue, Test = "PERMDISP", Factor = rownames(res2))
+    res_disp[[group]] = res2
+  }
+
+  # Append PERMANOVA + Betadisper results to stats dataframe as new columns
+  stats <- bind_rows(stats, res, res_disp[["Housing"]], res_disp[["TMT"]])
+  stats$Sig_Diff = ifelse(stats$p.value <= 0.05,"TRUE","FALSE")
+
+
+  # Plot PCoA
+    p <- ggplot(df, aes(x = PC1, y = PC2))
+    p <- p + geom_line(aes(group = Cage_ID), color="grey")
+    p <- p + geom_point(aes(fill = Treatment, color = Treatment, shape = Sex),  size = 3,  alpha = 0.8)
+    p <- p + scale_fill_manual(values = Treatment_color_pal)
+    p <- p + scale_color_manual(values = Treatment_color_pal)
+    p <- p + scale_shape_manual(values = Sex_shape_pal)
+    p <- p + xlab(paste0("PC1 (", PC1, "%)"))
+    p <- p + ylab(paste0("PC2 (", PC2, "%)"))
+    p <- p + ggtitle(paste0("PCoA: ",tissue," (Euclidean distance)"))
+    p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = "gray"),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"))
+    #p <- p + coord_fixed(ratio = 9/10)
+
+    # Save PCoA plots
+    trans_pcoas[[tissue]] = p
+}
+
+# Save stats
+stats_trans_bdiv = list()
+stats_trans_bdiv[["stats"]] = stats
+
+# Export table
+write_xlsx(stats, paste0(wd,"/TS4_VAT_PERMANOVA.xlsx"))
+
+# Visualize results
+print(stats_trans_bdiv[["stats"]])
+print(trans_pcoas)
+
+```
+
+
+### Differential expression
+Identify differentially expressed genes between the stress treatment groups.
+
+By default, the 1st level within the comparison group is considered to the reference/control, so it is important to order the factor levels correctly.
+
+```{r Diff Exp w/ DESeq2}
+
+# Identify differentially expressed genes between the stress treatment groups
+tissue = "VAT"
+group = "Treatment"
+
+# Create dataframes to store results
+res.deg = data.frame(
+  Tissue = factor(), 
+  Group = factor(), 
+  Comparison = factor(), 
+  Gene = character()
+  )
+trans_volcano = list()
+
+for (tissue in c("Adr", "VAT")) {
+  for (group in c("Housing", "TMT", "Treatment")) {
+    if (group != "Treatment") {
+      
+      # Get DESeq objects produced in the previous section
+      dds = DESeq_obj[[tissue]]
+      
+      # Extract results
+      if (group == "Housing") {
+        res <- results(dds, name = resultsNames(dds)[3])
+      } else {
+        res <- results(dds, name = resultsNames(dds)[4])
+      }
+          
+        
+      # Shrink LFC
+        ## This estimate is more robust than the raw value
+        ## Without the shrinkage, low counts have a high LFC but are non significant 
+        ## (ie. we see a large difference but the variance is also so high that this observation may be due to chance only).
+        ## The shrinkage corrects this and the relationship between LFC and significance is smoother.
+        res.lfc <- lfcShrink(dds, coef=2, res=res, type="ashr")
+          
+        
+      # Prepare dataframe
+        res.de = data.frame(res.lfc)
+        res.de$Gene = rownames(res.de)
+          
+      # Label up- and down-regulated genes
+        FDRthreshold = 0.01
+        logFCthreshold = 1
+          
+        # add a column of NAs
+        res.de$diffexpressed <- "NO"
+        # if log2Foldchange > logFCthreshold and pvalue < FDRthreshold, set as "UP" 
+        res.de$diffexpressed[res.de$log2FoldChange > logFCthreshold & res.de$padj <= FDRthreshold] = "UP"
+        # if log2Foldchange < logFCthreshold and pvalue < FDRthreshold, set as "DOWN"
+        res.de$diffexpressed[res.de$log2FoldChange < -logFCthreshold & res.de$padj <= FDRthreshold] = "DOWN"
+          
+      # Save results
+        res.de <- res.de %>%
+            mutate(Tissue = tissue, Group = group, Comparison = "NA")
+        res.deg = bind_rows(res.deg, res.de)
+        
+      # #Color Palette
+      #   Direction_color_pal <- c("grey55", get(paste0(group,"_color_pal")))
+      #   names(Direction_color_pal) <- c("NO", "DOWN", "UP")
+      #   
+      # # Ensure padj values > 0 before
+      #   res.de <- res.de %>% filter(!is.na(padj) & padj > 0)
+      # 
+      # #Volcano Plot
+      #   p <- ggplot(data = res.de, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed))
+      #   # Add lines defining the LFC and p-value thresholds
+      #   p <- p + geom_hline(yintercept=-log10(FDRthreshold), col="red3", alpha = 0.5)
+      #   p <- p + geom_vline(xintercept=c(-logFCthreshold, logFCthreshold), col="red3", alpha = 0.5)
+      #   # Add genes
+      #   p <- p + geom_point(aes(fill = diffexpressed), color = "gray25", shape = 21, size=5, alpha = 0.5, show.legend = FALSE)
+      #   # Add annotation for the number of down-regulated genes on the left
+      #   p <- p + annotate("text", 
+      #                       x = -max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to left
+      #                       y = max(-log10(res.de$padj)) + 1,  # Slightly above max y-value
+      #                       label = paste0("", sum(res.de$diffexpressed == "DOWN")), #\u2193
+      #                       size = 8, 
+      #                       #fontface = "bold", 
+      #                       hjust = 0)
+      #   # Add annotation for number of up-regulated genes on the right
+      #   p <- p + annotate("text", 
+      #                       x = max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to right
+      #                       y = max(-log10(res.de$padj)) + 1, 
+      #                       label = paste0("", sum(res.de$diffexpressed == "UP")), #\u2191
+      #                       size = 8, 
+      #                       #fontface = "bold", 
+      #                       hjust = 1)
+      #   p <- p + scale_fill_manual(values = Direction_color_pal)
+      #   p <- p + scale_colour_manual(values = Direction_color_pal)
+      #   p <- p + xlim(c(-max(abs(res.de$log2FoldChange)), max(abs(res.de$log2FoldChange))))
+      #   p <- p + ggtitle(paste("Volcano Plot:",tissue,sep = " "))
+      #   p <- p + xlab(expression(Log[2]~"(Fold Change)"))
+      #   p <- p + ylab(expression(-Log[10]~"(FDR " * italic(p) * "-value)"))
+      #   p <- p + theme(
+      #             panel.background = element_rect(fill = "transparent",colour = "gray"),
+      #             plot.background = element_rect(fill = "transparent",colour = NA),
+      #             legend.background = element_rect(fill = "transparent",colour = NA),
+      #             panel.grid.major = element_blank(),
+      #             panel.grid.minor = element_blank(),
+      #             legend.key = element_rect(fill = "transparent",colour = NA),
+      #             axis.line = element_line(color = "gray50"),
+      #             axis.text=element_text(size=20),
+      #             axis.title=element_text(size=22))
+      #   p
+      #   
+      #   # Save plot
+      #   trans_volcano[[tissue]][[group]][["no_comp"]] = p
+      #     
+      #   # Export PDF
+      #     pdf(paste0(wd,"/Fig_volcano_",tissue,"_",group,".pdf"), width = 6, height = 6)
+      #     print(p)
+      #     while (!is.null(dev.list()))  dev.off()
+          
+      
+      } else {
+        
+        # To calculate DEGs between the treatment groups we need to make a new DESeq2 object with Treatment (instead of Housing * TMT) in the design formula.
+        
+        # Load data
+        md_s = transcriptomes[[tissue]][["metadata"]]
+        cts = transcriptomes[[tissue]][["counts"]]
+          
+        # Create a DESeq data object
+        dds <- DESeqDataSetFromMatrix(countData = cts,
+                                      colData = md_s,
+                                      design = ~ Sex + Treatment + Litter)
+          
+        # Filter low count genes
+        ## Keep only genes with at least 1 count in 3 or more samples (min group size)
+        idx <- rowSums(counts(dds, normalized=FALSE) >= 1) >= 3
+        dds.f <- dds[idx, ]
+          
+        # Estimate dispersions
+        dds.f <- DESeq(dds.f)
+        DESeq_obj[[paste0(tissue,"_T")]] = dds.f
+        
+        # Define the pairwise comparisons
+        comps = list(c("Treatment", "Pair_H2O", "Pair_TMT"),
+                   c("Treatment", "Pair_H2O", "Single_H2O"),
+                   c("Treatment", "Pair_H2O", "Single_TMT"),
+                   c("Treatment", "Pair_TMT", "Single_H2O"),
+                   c("Treatment", "Pair_TMT", "Single_TMT"),
+                   c("Treatment", "Single_H2O", "Single_TMT"))
+        
+        comp = comps[[2]]
+          
+        for (comp in comps) {
+          
+          # Extract results
+          dds = DESeq_obj[[paste0(tissue,"_T")]]
+          res <- results(dds, contrast = comp)
+          
+          # Shrink LFC
+            ## This estimate is more robust than the raw value
+            ## Without the shrinkage, low counts have a high LFC but are non significant 
+            ## (ie. we see a large difference but the variance is also so high that this observation may be due to chance only).
+            ## The shrinkage corrects this and the relationship between LFC and significance is smoother.
+          res.lfc <- lfcShrink(dds, contrast = comp, res=res, type="ashr")
+          
+          # Prepare dataframe
+          res.de = data.frame(res) #res.lfc
+          res.de$Gene = rownames(res.de)
+          
+          
+          # Label up- and down-regulated genes
+          FDRthreshold = 0.01
+          logFCthreshold = 1
+          
+          # add a column of NAs
+          res.de$diffexpressed <- "NO"
+          # if log2Foldchange > logFCthreshold and pvalue < FDRthreshold, set as "UP" 
+          res.de$diffexpressed[res.de$log2FoldChange > logFCthreshold & res.de$padj <= FDRthreshold] = "UP"
+          # if log2Foldchange < logFCthreshold and pvalue < FDRthreshold, set as "DOWN"
+          res.de$diffexpressed[res.de$log2FoldChange < -logFCthreshold & res.de$padj <= FDRthreshold] = "DOWN"
+          
+          
+          # Save results
+          res.de <- res.de %>%
+            mutate(Tissue = tissue, Group = group, Comparison = paste(comp[2:3], collapse = "-"))
+          res.deg = bind_rows(res.deg, res.de)
+          
+          tissue = "VAT"
+          Group = "Treatment"
+          comp = comps[[1]]
+
+          res.de = subset(res.deg, Tissue == tissue & Group == group & Comparison == paste(comp[2:3], collapse = "-"))
+
+
+          # Define the color Palette
+          Direction_color_pal <- c("grey55", Treatment_color_pal[comp[2]], Treatment_color_pal[comp[3]])
+          names(Direction_color_pal) <- c("NO", "DOWN", "UP")
+
+          # Ensure padj values > 0 before
+          res.de <- res.de %>% filter(!is.na(padj) & padj > 0)
+
+          # Filter out unimportant genes
+          ## To reduce the size of the .svg file, we removed 90% of non-significant genes with abs(LFC)<0.25
+            important_genes <- res.de %>%
+              filter(abs(log2FoldChange) >= 2 | padj <= 0.05)  # Retain significant genes with higher LFC
+
+            less_important_genes <- res.de %>%
+              filter(abs(log2FoldChange) < 2 & padj > 0.05)    # Genes with low LFC and not significant
+
+            # Sample 10% of less important genes to keep
+            set.seed(555)  # For reproducibility
+            sampled_genes <- less_important_genes %>%
+              sample_frac(0.05)  # Retain 10% of less important genes
+
+            # Combine the important genes with the sampled less important genes
+            res.de_filtered <- bind_rows(important_genes, sampled_genes)
+
+            # Verify the size reduction
+            cat("Original number of genes:", nrow(res.de), "\n")
+            cat("Filtered number of genes:", nrow(res.de_filtered), "\n")
+
+
+          # Volcano Plot
+          p <- ggplot(data = res.de_filtered, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed))
+          # Add lines defining the LFC and p-value thresholds
+          p <- p + geom_hline(yintercept=-log10(FDRthreshold), col="red3", alpha = 0.5)
+          p <- p + geom_vline(xintercept=c(-logFCthreshold, logFCthreshold), col="red3", alpha = 0.5)
+          # Add genes
+          p <- p + geom_point(aes(fill = diffexpressed), color = "gray25", shape = 21, size=5, alpha = 0.5, show.legend = FALSE)
+          # Add annotation for the number of down-regulated genes on the left
+          p <- p + annotate("text",
+                            x = -max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to left
+                            y = max(-log10(res.de$padj)) + 1,  # Slightly above max y-value
+                            label = paste0("", sum(res.de$diffexpressed == "DOWN")), #\u2193
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 0)
+          # Add annotation for number of up-regulated genes on the right
+          p <- p + annotate("text",
+                            x = max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to right
+                            y = max(-log10(res.de$padj)) + 1,
+                            label = paste0("", sum(res.de$diffexpressed == "UP")), #\u2191
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 1)
+          p <- p + scale_fill_manual(values = Direction_color_pal)
+          p <- p + scale_colour_manual(values = Direction_color_pal)
+          #p <- p + xlim(c(-max(abs(res.de$log2FoldChange)), max(abs(res.de$log2FoldChange))))
+          p <- p + ggtitle(paste("Volcano Plot:",tissue,paste(comp[2:3],collapse = " - "),sep = " "))
+          p <- p + xlab(expression(Log[2]~"(Fold Change)"))
+          p <- p + ylab(expression(-Log[10]~"(FDR " * italic(p) * "-value)"))
+          p <- p + xlim(c(-30,30))
+          p <- p + ylim(c(0,11.5))
+          p <- p + theme(
+                  panel.background = element_rect(fill = "transparent",colour = "gray"),
+                  plot.background = element_rect(fill = "transparent",colour = NA),
+                  legend.background = element_rect(fill = "transparent",colour = NA),
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  legend.key = element_rect(fill = "transparent",colour = NA),
+                  axis.line = element_line(color = "gray50"),
+                  axis.text=element_text(size=20),
+                  axis.title=element_text(size=22))
+          p
+
+          # Save plot
+          #trans_volcano[[tissue]][[group]][[paste(comp[2:3],collapse = "_")]] = p
+
+          # Export PDF
+          pdf(paste0(wd,"/Fig_volcano_",tissue,"_",group,"_",paste(comp[2:3],collapse = "_"),"_wo_LFC_shrink_small.pdf"),
+              width=6, height=6)
+          print(p)
+          while (!is.null(dev.list()))  dev.off()
+      } 
+    }
+  }
+}
+beep()
+
+# Save results
+DEG_df = res.deg
+
+
+# Export table
+write_xlsx(DEG_df, paste0(wd,"/TS5_VAT_DESeq2.xlsx"))
+
+
+
+# Visualize results
+print(trans_volcano)
+
+```
+
+
+### Pathway Enrichment
+Investigate whether the DEGs identified in the previous analyses are enriched in specific biological pathways.
+
+```{r pathway enrichment}
+
+# Create a list to save results
+GO_enrich = list()
+GO_plots = list()
+
+# Define thresholds
+FDRthreshold = 0.01
+logFCthreshold = 1
+
+pAdjustMethod = "fdr"
+pvalueCutoff = 0.05
+qvalueCutoff  = 0.05
+
+for (tissue in c("Adr", "VAT")) {
+  for (group in c("Housing", "TMT", "Treatment")) {
+    # Pick results
+    res.de = subset(DEG_df, Tissue == tissue & Group == group)
+  
+      if (group == "Treatment") {
+        
+        # Look through each of the pairwise comparisons between treatment groups
+        for (comp in unique(res.de$Comparison)) {
+         res = subset(res.de, Comparison == comp)
+
+          # Make dataframe of all genes w/ entrezID annotations (used by clusterProfiler)
+          genes_universe <- bitr(res$Gene, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+
+          # Make dataframe of DEGs w/ entrezID annotations (used by clusterProfiler)
+          DEGs <- bitr(res$Gene[which(res$padj < FDRthreshold & abs(res$log2FoldChange) > logFCthreshold)], fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+
+          # GO "biological process (BP)" enrichment
+          go_bp <- enrichGO(gene          = as.character(unique(DEGs$ENTREZID)),
+                            universe      = as.character(unique(genes_universe$ENTREZID)),
+                            OrgDb         = org.Mm.eg.db,
+                            ont           = "BP",
+                            pAdjustMethod = pAdjustMethod,
+                            pvalueCutoff  = pvalueCutoff,
+                            qvalueCutoff  = qvalueCutoff,
+                            readable      = TRUE)
+          
+          if (nrow(go_bp) > 0) {
+            # Save results
+            GO_enrich[[tissue]][[group]][[comp]] = go_bp
+            
+            # Make plot of top 20 biological processes
+            p = dotplot(go_bp, x = "Count", size = "GeneRatio", showCategory = 15,
+                        title = paste0("Biological pathway enrichment in DEGs \n between "
+                                       , comp," (", tissue,")"))
+            p
+            
+            # Save plot
+            GO_plots[[tissue]][[group]][[comp]] = p
+          }
+        }
+      } else {
+        res = res.de
+        
+        # Make dataframe of all genes w/ entrezID annotations (used by clusterProfiler)
+        genes_universe <- bitr(res$Gene, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+            
+        # Make dataframe of DEGs w/ entrezID annotations (used by clusterProfiler)
+        DEGs <- bitr(res$Gene[which(res$padj < FDRthreshold & abs(res$log2FoldChange) > logFCthreshold)], fromType = "SYMBOL", toType = "ENTREZID", OrgDb = "org.Mm.eg.db")
+            
+        # GO "biological process (BP)" enrichment
+          go_bp <- enrichGO(gene          = as.character(unique(DEGs$ENTREZID)),
+                            universe      = as.character(unique(genes_universe$ENTREZID)),
+                            OrgDb         = org.Mm.eg.db,
+                            ont           = "BP",
+                            pAdjustMethod = pAdjustMethod,
+                            pvalueCutoff  = pvalueCutoff,
+                            qvalueCutoff  = qvalueCutoff,
+                            readable      = TRUE)
+          
+          if (nrow(go_bp) > 0) {
+            # Save results
+            GO_enrich[[tissue]][[group]][["na"]] = go_bp
+            
+            # Make plot of top 20 biological processes
+            p = dotplot(go_bp, x = "Count", size = "GeneRatio", showCategory = 15,
+                        title = paste0("Biological pathway enrichment in DEGs \n between "
+                                       , group," groups (", tissue,")"))
+            p
+            
+            # Save plot
+            GO_plots[[tissue]][[group]][["na"]] = p
+          }
+      }
+  }
+}
+beep()
+
+
+# Export results as Excel file
+df_list = GO_enrich
+
+# Function to flatten nested lists and keep track of names
+flatten_list <- function(nested_list, parent_name = "") {
+  flat_list <- list()
+  
+  for (name in names(nested_list)) {
+    new_name <- ifelse(parent_name == "", name, paste(parent_name, name, sep = "_"))
+    
+    if (is.list(nested_list[[name]])) {
+      # Recursively flatten if it's still a list
+      flat_list <- c(flat_list, flatten_list(nested_list[[name]], new_name))
+    } else {
+      # If not a list, store the data frame
+      flat_list[[new_name]] <- nested_list[[name]]
+    }
+  }
+  
+  return(flat_list)
+}
+
+# Flatten GO_enrich
+df_list <- flatten_list(df_list)
+
+# Shorten names
+sheet_names <- substr(names(df_list), 1, 31)
+
+
+wb <- createWorkbook() # Create a new workbook
+# Add each dataframe as a separate sheet in the workbook
+for (i in seq_along(df_list)) {
+  addWorksheet(wb, sheetName = sheet_names[i])
+  writeData(wb, sheet = i, x = df_list[[i]])
+}
+
+# Save the workbook to a file
+saveWorkbook(wb, paste0(wd,"/Microbiome/GO_Enrichment_Transcriptome.xlsx"))
+
+
+# Visualize results
+print(GO_plots)
+
+```
+
+
+### Genes expression
+```{r focus genes}
+
+tissue = "VAT"
+group = "Treatment"
+sex = "Male&Female"
+
+stats <- data.frame(
+      Tissue = factor(),
+      Group = factor(),
+      Gene = factor(),
+      Comparison = character(),
+      contrast = factor(),
+      estimate = numeric(),
+      SE = numeric(),
+      df = numeric(),
+      t.ratio = numeric(),
+      p.value = numeric()
+    )
+    stats_pair <- data.frame(
+      Tissue = factor(),
+      Group = factor(),
+      Sex = factor(),
+      Gene = factor(),
+      contrast = factor())
+
+for (tissue in c("Adr", "VAT")) {
+  for (group in c("Housing", "TMT", "Treatment")) {
+    if (group != "Treatment") {
+      
+      # Extract antimicrobial defense genes
+      go_bp = GO_enrich[[tissue]][[group]][["na"]]@result
+      
+      if (length(go_bp) > 0) {
+        # Antimicrobial genes
+        amps = go_bp %>%
+          filter(ID == "GO:0061844") %>%
+          pull(geneID)  # Extract the Gene column
+        amps <- strsplit(amps, "/")[[1]] 
+      
+        # Endocrine
+        end = go_bp %>%
+          filter(ID == "GO:0035270") %>%
+          pull(geneID)  # Extract the Gene column
+        end <- strsplit(end, "/")[[1]] 
+        
+        # Focus genes
+        genes = c(amps, end)
+      }
+      
+      
+      # Get DESeq object
+      dds = DESeq_obj[[tissue]]
+  
+      # Get normalized counts
+      norm_cts <- counts(dds, normalized = TRUE)
+      
+      
+      # Get counts for marker genes
+      cts_mark <- as.data.frame(norm_cts[rownames(norm_cts) %in% genes, ])
+      
+      cts_mark = as.data.frame(t(cts_mark))
+      cts_mark$Mouse_ID = rownames(cts_mark)
+      
+      cts_mark_md = merge(md, cts_mark, by = "Mouse_ID")
+      
+      # Add gene category
+      gene_category <- data.frame(
+        Gene = genes,
+        Category = ifelse(genes %in% amps, "AMPs", "Endocrine")
+      )
+      
+      # Reshape the data for plotting
+      cts_long <- cts_mark_md %>%
+        pivot_longer(
+          cols = 8:ncol(cts_mark_md),               # Explicitly specify the gene expression columns
+          names_to = "Gene",         # New column for gene names
+          values_to = "Expression"   # New column for expression values
+        ) %>%
+        left_join(gene_category, by = "Gene") # Join with gene category information
+      
+      
+      cts_long$Treatment = gsub("_", "\n", cts_long$Treatment)
+      
+      pallete = get(paste0(group, "_color_pal"))
+      names(pallete) = gsub("_", "\n", names(pallete))
+      
+      
+      # Summarize data: Calculate mean and standard error (SE)
+      cts_summary <- cts_long %>%
+        group_by(!!sym(group), Category, Gene) %>%
+        summarise(
+          mean_expression = mean(Expression, na.rm = TRUE),
+          se_expression = sd(Expression, na.rm = TRUE) / sqrt(n()),
+          .groups = "drop"
+        )
+      
+      # Bar plot
+      comps <- list(c("Pair_H2O", "Pair_TMT"),
+                  c("Pair_TMT", "Single_H2O"),
+                  c("Single_TMT", "Single_H2O"),
+                  c("Pair_H2O", "Single_H2O"),
+                  c("Pair_TMT", "Single_TMT"),
+                  c("Pair_H2O", "Single_TMT"))
+      
+      #p = ggplot(cts_long_, aes_string(x = group, y = "Expression", fill = group))
+      #p <- p + geom_boxplot(show.legend = FALSE, outlier.shape = NA, width=0.25)
+      
+      p <- ggplot(cts_summary, aes_string(x = group, y = "mean_expression", fill = group))
+      p <- p + geom_bar(stat = "identity", position = "dodge", show.legend = FALSE, color = "grey10", width=0.5)
+      p <- p + geom_errorbar(aes(
+            ymin = mean_expression - se_expression,
+            ymax = mean_expression + se_expression
+          ), width = 0.2, position = position_dodge(0.9))  # Error bars
+      #p <- p + geom_sina(aes_string(fill = group, shape = "Sex"), size=2, alpha = 0.5, show.legend = FALSE) #shape = 21,
+      #p <- p + facet_grid(Category ~ Gene, scales = "free_y") 
+      p <- p + facet_wrap(Category ~ Gene, scales = "free_y", nrow = 1) 
+      p <- p + scale_fill_manual(values = pallete)
+      p <- p + scale_shape_manual(values = Sex_shape_pal)
+      p <- p + labs(y = "Mean Expression")
+      #p <- p + stat_compare_means(label = "p.signif", method = "wilcox.test", p.adjust.method = "holm", hide.ns = T) # label = "p.format", hide.ns = F, label.x.npc = 0.5, label.y.npc = 0.9 "wilcox.test" comparisons=comps,
+      p <- p + theme(
+                        panel.background = element_rect(fill = "transparent",colour = NA),
+                        plot.background = element_rect(fill = "transparent",colour = NA),
+                        legend.background = element_rect(fill = "transparent",colour = NA),
+                        panel.grid.major = element_blank(),
+                        panel.grid.minor = element_blank(),
+                        legend.key = element_rect(fill = "transparent",colour = NA),
+                        axis.line = element_line(color = "gray50"),
+                        axis.text.x = element_text(angle = 0, hjust = 0.5))
+      p
+      
+      # Export PDF
+      pdf(paste0(wd,"/Transcriptome/Outputs/",tissue,"/Markers/Fig_Bar_",group,"_",sex,"_Inflamm_abs_exp_sig_genes.pdf"), width = 1.6,height = 5) #"_",sex,
+      print(p)
+      while (!is.null(dev.list()))  dev.off()
+      
+    } else {
+      
+      ## Treatment
+      
+      # Get DESeq object
+      dds = DESeq_obj[[paste0(tissue,"_T")]]
+  
+      # Get normalized counts
+      norm_cts <- counts(dds, normalized = TRUE)
+
+      comp = comps[[1]]
+      for (comp in comps) {
+          
+        # Extract antimicrobial defense genes
+        go_bp = GO_enrich[[tissue]][[group]][[paste(comp[2:3], collapse = "-")]]@result
+          
+        if (length(go_bp) > 0) {
+            # Antimicrobial genes
+            amps = go_bp %>%
+              filter(ID == "GO:0061844") %>%
+              pull(geneID)  # Extract the Gene column
+            amps <- strsplit(amps, "/")[[1]] 
+          
+            # Endocrine
+            end = go_bp %>%
+              filter(ID == "GO:0035270") %>%
+              pull(geneID)  # Extract the Gene column
+            end <- strsplit(end, "/")[[1]] 
+            
+            # Focus genes
+            genes = c(amps, end)
+        }
+          
+        # Get counts for marker genes
+        cts_mark <- as.data.frame(norm_cts[rownames(norm_cts) %in% genes, ])
+        
+        cts_mark = as.data.frame(t(cts_mark))
+        cts_mark$Mouse_ID = rownames(cts_mark)
+        
+        cts_mark_md = merge(md, cts_mark, by = "Mouse_ID")
+        
+        
+        # Keep only relevant levels for the comparison
+        cts_mark_md = subset(cts_mark_md, Treatment %in% comp)
+        
+        
+        # Add gene category
+        gene_category <- data.frame(
+          Gene = genes,
+          Category = ifelse(genes %in% amps, "AMPs", "Endocrine")
+        )
+        
+        
+        # Test stress associations in each gene
+        gene = genes[2]
+        for (gene in genes){
+          
+          # Mixed effects model
+          formula <- formula(paste0(gene, " ~ Treatment + (1|Sex) + (1|Litter)")) 
+          model <- lmerTest::lmer(formula, cts_mark_md)
+          res <- as.data.frame(summary(model)[["coefficients"]])
+          colnames(res) = c("estimate", "SE", "df", "t.ratio", "p.value")
+          res <- res %>%
+              mutate(Tissue = tissue, Group = group, Gene = gene, Comparison = paste(comp[2:3], collapse = "-"), contrast = rownames(res))
+          res$Sig_Diff = ifelse(res$p.value <= 0.05, TRUE, FALSE)
+          stats <- bind_rows(stats, res)
+        }
+        
+        
+        
+        
+        
+        
+        
+        # Reshape the data for plotting
+        cts_long <- cts_mark_md %>%
+          pivot_longer(
+            cols = 8:ncol(cts_mark_md),               # Explicitly specify the gene expression columns
+            names_to = "Gene",         # New column for gene names
+            values_to = "Expression"   # New column for expression values
+          ) %>%
+          left_join(gene_category, by = "Gene") # Join with gene category information
+        
+        # Keep only relevant levels for the comparison
+        cts_long = subset(cts_long, Treatment %in% comp)
+        
+        
+        cts_long$Treatment = gsub("_", "\n", cts_long$Treatment)
+        
+        pallete = get(paste0(group, "_color_pal"))
+        names(pallete) = gsub("_", "\n", names(pallete))
+        
+        
+        # Summarize data: Calculate mean and standard error (SE)
+        cts_summary <- cts_long %>%
+          group_by(!!sym(group), Category, Gene) %>%
+          summarise(
+            mean_expression = mean(Expression, na.rm = TRUE),
+            se_expression = sd(Expression, na.rm = TRUE) / sqrt(n()),
+            .groups = "drop"
+          )
+      
+        # Make plot
+        p = ggplot(cts_long, aes_string(x = group, y = "Expression", fill = group))
+        p <- p + geom_boxplot(show.legend = FALSE, outlier.shape = NA, width=0.25)
+        
+        # p <- ggplot(cts_summary, aes_string(x = group, y = "mean_expression", fill = group))
+        # p <- p + geom_bar(stat = "identity", position = "dodge", show.legend = FALSE, color = "grey10", width=0.5)
+        # p <- p + geom_errorbar(aes(
+        #       ymin = mean_expression - se_expression,
+        #       ymax = mean_expression + se_expression
+        #     ), width = 0.2, position = position_dodge(0.9))  # Error bars
+        p <- p + geom_sina(aes_string(fill = group, shape = "Sex"), size=2, alpha = 0.5, show.legend = FALSE) #shape = 21,
+        #p <- p + facet_grid(Category ~ Gene, scales = "free_y") 
+        p <- p + facet_wrap(Category ~ Gene, scales = "free_y", nrow = 1) 
+        p <- p + scale_fill_manual(values = pallete)
+        p <- p + scale_shape_manual(values = Sex_shape_pal)
+        p <- p + labs(y = "Mean Expression")
+        #p <- p + stat_compare_means(label = "p.signif", method = "wilcox.test", p.adjust.method = "holm", hide.ns = T) # label = "p.format", hide.ns = F, label.x.npc = 0.5, label.y.npc = 0.9 "wilcox.test" comparisons=comps,
+        p <- p + theme(
+                          panel.background = element_rect(fill = "transparent",colour = NA),
+                          plot.background = element_rect(fill = "transparent",colour = NA),
+                          legend.background = element_rect(fill = "transparent",colour = NA),
+                          panel.grid.major = element_blank(),
+                          panel.grid.minor = element_blank(),
+                          legend.key = element_rect(fill = "transparent",colour = NA),
+                          axis.line = element_line(color = "gray50"),
+                          axis.text.x = element_text(angle = 0, hjust = 0.5))
+        p
+        
+        # Export PDF
+        pdf(paste0(wd,"/Transcriptome/Outputs/",tissue,"/Markers/Fig_Bar_",group,"_",sex,"_Inflamm_abs_exp_sig_genes.pdf"), width = 1.6,height = 5) #"_",sex,
+        print(p)
+        while (!is.null(dev.list()))  dev.off()
+
+
+      }
+    }
+  }
+}    
+    
+```
+
+### Volcano plots
+```{r transcript volcanos}
+
+# Identify differentially expressed genes between the stress treatment groups
+
+
+# Create dataframes to store results
+trans_volcano = list()
+
+
+# Define the pairwise comparisons
+        comps = list("NA",
+          c("Treatment", "Pair_H2O", "Pair_TMT"),
+                   c("Treatment", "Pair_H2O", "Single_H2O"),
+                   c("Treatment", "Pair_H2O", "Single_TMT"),
+                   c("Treatment", "Pair_TMT", "Single_H2O"),
+                   c("Treatment", "Pair_TMT", "Single_TMT"),
+                   c("Treatment", "Single_H2O", "Single_TMT"))
+        comp = comps[[1]]
+
+
+tissue = "VAT"
+group = "Treatment"
+        
+for (tissue in c("Adr", "VAT")) {
+  for (group in c("Housing", "TMT", "Treatment")) {
+    if (group != "Treatment") {
+      
+      # Get DEG data
+      res.deg = subset(DEG_df, Tissue == tissue & Group == group & Comparison == "NA")
+      res.de = res.deg
+      
+      # Extract antimicrobial defense genes
+      go_bp = GO_enrich[[tissue]][[group]][["na"]]@result
+      
+      if (length(go_bp) > 0) {
+        # Antimicrobial genes
+        amps = go_bp %>%
+          filter(ID == "GO:0061844") %>%
+          pull(geneID)  # Extract the Gene column
+        amps <- strsplit(amps, "/")[[1]] 
+      
+        # Endocrine
+        end = go_bp %>%
+          filter(ID == "GO:0035270") %>%
+          pull(geneID)  # Extract the Gene column
+        end <- strsplit(end, "/")[[1]] 
+        
+        # Focus genes
+        focus_genes = c(amps, end)
+        
+      }
+      
+      #Color Palette
+        Direction_color_pal <- c("grey55", get(paste0(group,"_color_pal")))
+        names(Direction_color_pal) <- c("NO", "DOWN", "UP")
+
+      # Ensure padj values > 0 before
+        res.de <- res.de %>% filter(!is.na(padj) & padj > 0)
+        
+      # Subset focus genes in res.de
+      focus_genes <- res.de[res.de$Gene %in% amps_list, ]
+
+      #Volcano Plot
+        p <- ggplot(data = res.de, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed))
+        # Add lines defining the LFC and p-value thresholds
+        p <- p + geom_hline(yintercept=-log10(FDRthreshold), col="red3", alpha = 0.5)
+        p <- p + geom_vline(xintercept=c(-logFCthreshold, logFCthreshold), col="red3", alpha = 0.5)
+        # Add genes
+        p <- p + geom_point(aes(fill = diffexpressed), color = "gray25", shape = 21, size=5, alpha = 0.5, show.legend = FALSE)
+
+        #Add label to AMPs genes
+        p <- p + geom_label_repel(data = res.de[res.de$Gene %in% amps, ],
+                         aes_string(label = "Gene", color = "factor(diffexpressed)"),
+                         size = 8, show.legend = FALSE, fontface = "italic",
+                         box.padding = unit(0.35, "lines"),
+                         point.padding = unit(0.5, "lines"),
+                         max.overlaps = 100) #, nudge_x = 0, nudge_y = p_val <= 0.05
+        
+        # Add label to focus genes
+        p <- p + geom_label_repel(data = res.de[res.de$Gene %in% end, ],
+                         aes_string(label = "Gene", color = "factor(diffexpressed)"),
+                         size = 8, show.legend = FALSE, fontface = "italic",
+                         box.padding = unit(0.35, "lines"),
+                         point.padding = unit(0.5, "lines"),
+                         max.overlaps = 100) #, nudge_x = 0, nudge_y = p_val <= 0.05
+        
+        p <- p + geom_point(data = res.de[res.de$Gene %in% c(amps,end), ], aes(fill = diffexpressed),  shape=21, size=5, alpha=0.5, color="grey1", stroke = 1.5, show.legend = FALSE)
+        
+        # Add annotation for the number of down-regulated genes on the left
+        p <- p + annotate("text",
+                            x = -max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to left
+                            y = max(-log10(res.de$padj)) + 1,  # Slightly above max y-value
+                            label = paste0("", sum(res.de$diffexpressed == "DOWN")), #\u2193
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 0)
+        # Add annotation for number of up-regulated genes on the right
+        p <- p + annotate("text",
+                            x = max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to right
+                            y = max(-log10(res.de$padj)) + 1,
+                            label = paste0("", sum(res.de$diffexpressed == "UP")), #\u2191
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 1)
+        p <- p + scale_fill_manual(values = Direction_color_pal)
+        p <- p + scale_colour_manual(values = Direction_color_pal)
+        p <- p + xlim(c(-max(abs(res.de$log2FoldChange)), max(abs(res.de$log2FoldChange))))
+        p <- p + ggtitle(paste("Volcano Plot:",tissue,sep = " "))
+        p <- p + xlab(expression(Log[2]~"(Fold Change)"))
+        p <- p + ylab(expression(-Log[10]~"(FDR " * italic(p) * "-value)"))
+        p <- p + theme(
+                  panel.background = element_rect(fill = "transparent",colour = "gray"),
+                  plot.background = element_rect(fill = "transparent",colour = NA),
+                  legend.background = element_rect(fill = "transparent",colour = NA),
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  legend.key = element_rect(fill = "transparent",colour = NA),
+                  axis.line = element_line(color = "gray50"),
+                  axis.text=element_text(size=20),
+                  axis.title=element_text(size=22))
+        p
+
+        # Save plot
+        trans_volcano[[tissue]][[group]][["no_comp"]] = p
+
+        # Export PDF
+          pdf(paste0(wd,"/Fig_volcano_",tissue,"_",group,".pdf"), width = 6, height = 6)
+          print(p)
+          while (!is.null(dev.list()))  dev.off()
+          
+      
+      } else {
+        
+        # Get DEG data
+        res.deg = subset(DEG_df, Tissue == tissue & Group == group) 
+        
+        comp = unique(res.deg$Comparison)[2]
+        
+        for (comp in unique(res.deg$Comparison)) {
+          # Extract antimicrobial defense genes
+          go_bp = GO_enrich[[tissue]][[group]][[comp]]@result
+          
+          if (length(go_bp) > 0) {
+            # Antimicrobial genes
+            amps = go_bp %>%
+              filter(ID == "GO:0061844") %>% #"GO:0061844"
+              pull(geneID)  # Extract the Gene column
+            amps <- strsplit(amps, "/")[[1]] 
+          
+            # Endocrine
+            end = go_bp %>%
+              filter(ID == "GO:0035270") %>%
+              pull(geneID)  # Extract the Gene column
+            end <- strsplit(end, "/")[[1]] 
+            
+          }
+          
+          comp = strsplit(comp, "-")[[1]]
+
+          res.de = subset(res.deg, Comparison == paste(comp[1:2], collapse = "-"))
+
+
+          # Define the color Palette
+          Direction_color_pal <- c("grey55", Treatment_color_pal[comp[1]], Treatment_color_pal[comp[2]])
+          names(Direction_color_pal) <- c("NO", "DOWN", "UP")
+
+          # Ensure padj values > 0 before
+          res.de <- res.de %>% filter(!is.na(padj) & padj > 0)
+
+          # Filter out unimportant genes
+          ## To reduce the size of the .svg file, we removed 90% of non-significant genes with abs(LFC)<0.25
+            important_genes <- res.de %>%
+              filter(abs(log2FoldChange) >= 0.25 | padj <= 0.5)  # Retain significant genes with higher LFC
+
+            less_important_genes <- res.de %>%
+              filter(abs(log2FoldChange) < 0.25 & padj > 0.5)    # Genes with low LFC and not significant
+
+            # Sample 10% of less important genes to keep
+            set.seed(555)  # For reproducibility
+            sampled_genes <- less_important_genes %>%
+              sample_frac(0.10)  # Retain 10% of less important genes
+
+            # Combine the important genes with the sampled less important genes
+            res.de_filtered <- bind_rows(important_genes, sampled_genes)
+
+            # Verify the size reduction
+            cat("Original number of genes:", nrow(res.de), "\n")
+            cat("Filtered number of genes:", nrow(res.de_filtered), "\n")
+            
+          res.de = res.de_filtered 
+
+
+          # Volcano Plot
+          p <- ggplot(data = res.de, aes(x=log2FoldChange, y=-log10(padj), col=diffexpressed))
+          # Add lines defining the LFC and p-value thresholds
+          p <- p + geom_hline(yintercept=-log10(FDRthreshold), col="red3", alpha = 0.5)
+          p <- p + geom_vline(xintercept=c(-logFCthreshold, logFCthreshold), col="red3", alpha = 0.5)
+          
+          # Add all genes
+          p <- p + geom_point(aes(fill = diffexpressed), color = "grey25", shape = 21, size=5, alpha = 0.5, show.legend = FALSE)
+          
+          # Add endocrine genes
+          # p <- p + geom_point(data = res.de[res.de$Gene %in% end, ], aes(fill = diffexpressed), color = "grey25", shape = 21, size=5, alpha = 0.75, stroke = 1.5, show.legend = FALSE)
+          # 
+          # # Add label to endocrine genes
+          # p <- p + geom_label_repel(data = res.de[res.de$Gene %in% end, ],
+          #                  aes(label = Gene), color = "grey25",
+          #                  size = 8, show.legend = FALSE, fontface = "italic",
+          #                  box.padding = unit(0.35, "lines"),
+          #                  point.padding = unit(0.5, "lines"),
+          #                  max.overlaps = 100) #, nudge_x = 0, nudge_y = p_val <= 0.05
+          # Add AMPs genes
+          # p <- p + geom_point(data = res.de[res.de$Gene %in% amps, ], aes(fill = diffexpressed), color = "red4", shape = 21, size=5, alpha = 0.75, stroke = 1.5, show.legend = FALSE)
+          # 
+          # #Add label to AMPs genes
+          # p <- p + geom_label_repel(data = res.de[res.de$Gene %in% amps, ],
+          #                  aes(label = Gene), color = "red4",
+          #                  size = 8, show.legend = FALSE, fontface = "italic",
+          #                  box.padding = unit(0.35, "lines"),
+          #                  point.padding = unit(0.5, "lines"),
+          #                  max.overlaps = 100) #, nudge_x = 0, nudge_y = p_val <= 0.05
+        
+          # Add annotation for the number of down-regulated genes on the left
+          p <- p + annotate("text",
+                            x = -max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to left
+                            y = max(-log10(res.de$padj)) + 1,  # Slightly above max y-value
+                            label = paste0("", sum(res.de$diffexpressed == "DOWN")), #\u2193
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 0)
+          # Add annotation for number of up-regulated genes on the right
+          p <- p + annotate("text",
+                            x = max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to right
+                            y = max(-log10(res.de$padj)) + 1,
+                            label = paste0("", sum(res.de$diffexpressed == "UP")), #\u2191
+                            size = 8,
+                            #fontface = "bold",
+                            hjust = 1)
+          p <- p + scale_fill_manual(values = Direction_color_pal)
+          p <- p + scale_colour_manual(values = Direction_color_pal)
+          #p <- p + xlim(c(-max(abs(res.de$log2FoldChange)), max(abs(res.de$log2FoldChange))))
+          p <- p + xlim(c(-25,25))
+          p <- p + ylim(c(0,11.5))
+          p <- p + ggtitle(paste("Volcano Plot:",tissue,paste(comp[1:2],collapse = " - "),sep = " "))
+          p <- p + xlab(expression(Log[2]~"(Fold Change)"))
+          p <- p + ylab(expression(-Log[10]~"(FDR " * italic(p) * "-value)"))
+          p <- p + theme(
+                  panel.background = element_rect(fill = "transparent",colour = "gray"),
+                  plot.background = element_rect(fill = "transparent",colour = NA),
+                  legend.background = element_rect(fill = "transparent",colour = NA),
+                  panel.grid.major = element_blank(),
+                  panel.grid.minor = element_blank(),
+                  legend.key = element_rect(fill = "transparent",colour = NA),
+                  axis.line = element_line(color = "gray50"),
+                  axis.text=element_text(size=20),
+                  axis.title=element_text(size=22))
+          p
+
+          # Save plot
+          trans_volcano[[tissue]][[group]][[paste(comp[1:2],collapse = "_")]] = p
+
+          # Export PDF
+          pdf(paste0(wd,"/Fig_volcano_",tissue,"_",group,"_",paste(comp[1:2],collapse = "_"),"_small.pdf"),
+              width=6, height=6)
+          print(p)
+          while (!is.null(dev.list()))  dev.off()
+      } 
+    }
+  }
+}
+beep()
+
+# Save results
+DEG_df = res.deg
+
+# Export results as Excel file
+df_list = DEG_df
+
+wb <- createWorkbook() # Create a new workbook
+# Add each dataframe as a separate sheet in the workbook
+for (i in seq_along(df_list)) {
+  addWorksheet(wb, sheetName = names(df_list)[i])
+  writeData(wb, sheet = i, x = df_list[[i]])
+}
+
+# Save the workbook to a file
+saveWorkbook(wb, paste0(wd,"/Microbiome/DESeq2_Transcriptome.xlsx"))
+
+
+
+# Visualize results
+print(trans_volcano)
+
+```
+
+### Focus genes
+Make a plot of 
+```{r focus gene expression}
+
+# Identify differentially expressed genes between the stress treatment groups
+
+
+# Create dataframes to store results
+trans_volcano = list()
+
+
+# Define the pairwise comparisons
+        comps = list("NA",
+          c("Treatment", "Pair_H2O", "Pair_TMT"),
+                   c("Treatment", "Pair_H2O", "Single_H2O"),
+                   c("Treatment", "Pair_H2O", "Single_TMT"),
+                   c("Treatment", "Pair_TMT", "Single_H2O"),
+                   c("Treatment", "Pair_TMT", "Single_TMT"),
+                   c("Treatment", "Single_H2O", "Single_TMT"))
+        comp = comps[[1]]
+
+
+tissue = "VAT"
+group = "Treatment"
+        
+for (tissue in c("Adr", "VAT")) {
+  for (group in c("Housing", "TMT", "Treatment")) {
+    if (group != "Treatment") {
+      
+      # Get DEG data
+      res.deg = subset(DEG_df, Tissue == tissue & Group == group & Comparison == "NA")
+      res.de = res.deg
+      
+      # Extract antimicrobial defense genes
+      go_bp = GO_enrich[[tissue]][[group]][["na"]]@result
+      
+      if (length(go_bp) > 0) {
+        # Antimicrobial genes
+        amps = go_bp %>%
+          filter(ID == "GO:0061844") %>%
+          pull(geneID)  # Extract the Gene column
+        amps <- strsplit(amps, "/")[[1]] 
+      
+        # Endocrine
+        end = go_bp %>%
+          filter(ID == "GO:0035270") %>%
+          pull(geneID)  # Extract the Gene column
+        end <- strsplit(end, "/")[[1]] 
+        
+        # Focus genes
+        focus_genes = c(amps, end)
+        
+      }
+
+      # Ensure padj values > 0 before
+        res.de <- res.de %>% filter(!is.na(padj) & padj > 0)
+        
+      # Subset focus genes in res.de
+      focus_genes <- res.de[res.de$Gene %in% amps_list, ]
+
+      
+        # Save plot
+        trans_volcano[[tissue]][[group]][["no_comp"]] = p
+
+        # Export PDF
+          pdf(paste0(wd,"/Fig_volcano_",tissue,"_",group,".pdf"), width = 6, height = 6)
+          print(p)
+          while (!is.null(dev.list()))  dev.off()
+          
+      
+      } else {
+        
+        # Initialize lists to store unique genes
+        focus_genes <- data.frame(
+          Comparison = character(),
+          Genes = character(),
+          Pathway = character()
+        )
+        
+        # Get DEG data
+        res.deg = subset(DEG_df, Tissue == tissue & Group == group) 
+        
+        comp = unique(res.deg$Comparison)[2]
+        
+        for (comp in c("Pair_H2O-Pair_TMT", "Pair_H2O-Single_H2O")) {
+          # Extract antimicrobial defense genes
+          go_bp = GO_enrich[[tissue]][[group]][[comp]]@result
+          
+          if (length(go_bp) > 0) {
+            # Antimicrobial genes
+            amps = go_bp %>%
+              filter(ID == "GO:0061844") %>% #"GO:0061844"
+              pull(geneID)  # Extract the Gene column
+            amps <- strsplit(amps, "/")[[1]] 
+            focus_genes <- rbind(focus_genes, data.frame(Comparison = comp, Gene = amps, Pathway = "Antimicrobial humoral response"))
+          
+            # Endocrine
+            end = go_bp %>%
+              filter(ID == "GO:0035270") %>%
+              pull(geneID)  # Extract the Gene column
+            end <- strsplit(end, "/")[[1]] 
+            focus_genes <- rbind(focus_genes, data.frame(Comparison = comp, Gene = end, Pathway = "Endocrine system development"))
+            
+          }
+        } 
+        
+        # Merge focus genes with expression data
+        df = merge(focus_genes, res.deg, by = c("Gene", "Comparison"), all.x = T)
+        
+        # Orders by increasing adjusted p-value
+        df <- df %>%
+          arrange(desc(padj)) %>%  # Order rows by increasing padj
+          mutate(Gene = factor(Gene, levels = unique(Gene)))  # Convert to factor with ordered levels
+        
+        # Bar plot
+          p <- ggplot(df, aes(x = Gene, y = abs(log2FoldChange)))
+          p <- p + geom_bar(aes(fill = Comparison, alpha = -log(padj)), stat = "identity", color = "grey25",  width = 0.5, stroke = 0.1)
+          p <- p + facet_grid(Pathway ~ Comparison, scales = "free_y", switch = "y")
+          p <- p + scale_fill_manual(values = c("Pair_H2O-Pair_TMT" = Treatment_color_pal[[2]], "Pair_H2O-Single_H2O" = Treatment_color_pal[[3]]))
+          p <- p + xlab("")
+          p <- p + coord_flip()
+          p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                strip.background = element_blank(),  # Removes grey background
+                strip.text = element_text(face = "bold"),  # Makes facet titles bold
+                strip.placement = "outside",
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5),
+                axis.text=element_text(size=20),
+                axis.title=element_text(size=22))
+          p
+
+          # Export PDF
+          pdf(paste0(wd,"/Fig_focus_genes_barplot.pdf"),
+              width=12, height=6)
+          print(p)
+          while (!is.null(dev.list()))  dev.off()
+    }
+  }
+}
+beep()
+
+# Export focus gene table
+write_xlsx(df, paste0(wd,"/Microbiome/Focus_DEGs_AMPs_endocrine.xlsx"))
+
+```
+
+### LFC difference
+Assess whether predator odor causes DEGS to have a larger average LFC than social isolation.
+```{r LFC difference}
+
+
+# Create dataframes to store results
+trans_volcano = list()
+
+
+# Define the pairwise comparisons
+comps = list("NA",
+             c("Treatment", "Pair_H2O", "Pair_TMT"),
+                   c("Treatment", "Pair_H2O", "Single_H2O"),
+                   c("Treatment", "Pair_H2O", "Single_TMT"),
+                   c("Treatment", "Pair_TMT", "Single_H2O"),
+                   c("Treatment", "Pair_TMT", "Single_TMT"),
+                   c("Treatment", "Single_H2O", "Single_TMT"))
+comp = comps[[1]]
+
+
+tissue = "VAT"
+group = "Treatment"
+
+# Get DEG data
+df = subset(DEG_df, Tissue == tissue & Group == group & Comparison %in% c("Pair_H2O-Pair_TMT", "Pair_H2O-Single_H2O") & diffexpressed != "NO")
+
+#### Plot ####
+
+
+p <- ggplot(df, aes(x = Comparison , y = abs(log2FoldChange)))
+p <- p + geom_sina(aes(fill = Comparison), shape=21, size=2, alpha = 0.5, show.legend = FALSE) 
+p <- p + geom_boxplot(aes(fill = Comparison), alpha=0.25, width = 0.15, outlier.shape = NA, outlier.alpha = 1)
+#p <- p + facet_grid( ~ diffexpressed)
+p <- p + scale_fill_manual(values = c(Treatment_color_pal[[2]], Treatment_color_pal[[3]]))
+p <- p + stat_compare_means(label = "p.format", method = "wilcox.test")
+p <- p + xlab("")
+p <- p + ylab(expression(Log[2]~"(Fold Change)"))
+p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                legend.position = "none",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5)) #angle = 0
+p
+
+pdf(paste0(wd, "/VAT_LFC.pdf"), width = 4, height = 5)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+```
+
+
+# Gut Microbiota
+Investigate the effects of brief predator exposure or prolonged social isolation on the gut microbiota of wild-derived mice.
+
+We profiled the gut microbiota through genome-resolved metagenomics. We assembled high-quality MAGs from D0 (T1) and D30 (T5) samples, grouped them into 95% average nucleotide identity species-level genome bins (SGBs), built a custom database using these representative SGBs, and profiled their abundance across all samples, including intermediate time points such as D15 (T3) and D22 (T4). 
+
+The code necessary to produce these outputs can be found in Metagenomic_data_processing.sh.
+
+## Import and prepare data
+### Mappability
+Assess how well our custom SGB database represents our samples.
+
+```{r Mappability}
+
+## Quantify read mappability to SGB dataset
+
+# Import mapping summary
+map = read.table(paste0(wd,"/Microbiome/mapping_summary.tsv"), header = TRUE, sep = "\t")
+
+colnames(map)[1] = "Sample_ID"
+
+LQ_samples = c("595_T3", "595_T4", "601_T3", "617_T4", "632_T3", "603_T3C", "603_T3D")
+
+map <- map %>%
+  filter(!Sample_ID %in% LQ_samples) # Remove low quality samples
+
+# Add timepoint
+map$Timepoint = substr(map$Sample_ID, nchar(map$Sample_ID) - 1, nchar(map$Sample_ID))
+
+
+# Overall mean and standard deviation
+overall_stats <- map %>%
+  summarize(
+    Mean_Mapped = mean(Mapped_Percentage, na.rm = TRUE),
+    SD_Mapped = sd(Mapped_Percentage, na.rm = TRUE)
+  )
+overall_stats$Timepoint = "All"
+
+# Mean and SD grouped by Timepoint
+timepoint_stats <- map %>%
+  group_by(Timepoint) %>%
+  summarize(
+    Mean_Mapped = mean(Mapped_Percentage, na.rm = TRUE),
+    SD_Mapped = sd(Mapped_Percentage, na.rm = TRUE)
+  )
+
+# Merge mappability stats
+map_stats = rbind(overall_stats, timepoint_stats)
+
+print(map_stats)
+
+```
+
+### SGB relative abundance
+Calculate the relative abundance of representative SGBs in each sample, using the outputs from the InStrain Profile.
+
+     1. Normalize mapped read count by sample library size
+     2. Add missing genomes for each sample (relative_abundance = 0) 
+     3. Normalize relative abundance by genome size 
+     4. Convert relative abundance into a percentage
+
+```{r SGB relative abundance}
+
+# Import read count per host filtered sample 
+total_reads <- read.table(paste0(wd,"/Microbiome/multiqc_fastqc.txt"), header = TRUE, sep = "\t")
+
+
+## Fix column names
+colnames(total_reads)[c(1,5)] = c("Sample_ID", "Total_Reads")
+
+## Keep only R1 total reads
+total_reads <- total_reads[grep("R1$", total_reads$Sample_ID), c("Sample_ID", "Total_Reads")]
+
+## Keep only sample name
+total_reads$Sample_ID = sub("\\.T.*", "", total_reads$Sample_ID)
+
+
+# Import representative SGB genome size data
+genome_size <- read_csv(paste0(wd,"/Microbiome/rep_SGBs_genome_sizes.csv"))
+
+
+# Import InStrain profile output, to assess how many reads in each sample mapped to representative SGBs
+file_list <- list.files(paste0(wd,"/Microbiome/SGB_profiles"), pattern = "*_genome_info\\.tsv$", full.names = TRUE)
+
+# Initialize an empty list to store dataframes
+profiles <- list()
+
+file = file_list[1]
+# Loop through each file in the list
+for (file in file_list) {
+    # Read the file into a dataframe
+    df <- read.table(file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
+    
+    # Extract Sample_ID from the file name
+    sample_id <- sub("_genome_info.tsv", "", basename(file))
+    
+    # Add Sample_ID column to the dataframe
+    df$Sample_ID <- sample_id
+    
+    # Fix genome names
+    df$genome <- sub(".fa", "", df$genome)
+    
+    # Add the dataframe to the list
+    profiles[[sample_id]] <- df
+}
+
+
+# Calculate SGB relative abundance in each sample (normalized by library size and SGB size)
+
+for (sample_id in names(profiles)) {
+  profile <- profiles[[sample_id]]
+  
+  # 1. Normalize mapped read count by sample library size
+  
+  # Get the total number of reads for this sample
+    num_reads <- total_reads$Total_Reads[total_reads$Sample_ID == sample_id]
+    
+    if (length(num_reads) == 1) {
+        # Normalize by library size (total number of reads)
+        profile$relative_abundance <- profile$filtered_read_pair_count / num_reads
+    }
+    
+    
+    # 2. Add missing genomes for each sample (relative_abundance = 0)
+    
+    # Identify missing genomes
+    missing_genomes <- setdiff(unique(genome_size$genome), profile$genome)
+    
+    if (length(missing_genomes) > 0) {
+        # Create a missing genomes dataframe with zero relative abundance
+        missing_df <- data.frame(
+            genome = missing_genomes,
+            matrix(NA, nrow = length(missing_genomes), ncol = ncol(profile) - 1)
+        )
+        colnames(missing_df) <- colnames(profile)
+        # Append the missing genomes to the profile
+        profile <- rbind(profile, missing_df)
+        # Zero missing genomes' relative abundance
+        profile$relative_abundance[is.na(profile$relative_abundance)] <- 0
+        # Add Sample_ID
+        profile$Sample_ID = sample_id
+    }
+    
+    # 3. Normalize relative abundance by genome size
+    
+    # Merge the profile with genome_size data
+    profile <- merge(profile, genome_size, by = "genome", all.x = TRUE)
+    
+    # Normalize relative abundance by genome size
+    profile$relative_abundance <- profile$relative_abundance / profile$genome_size
+    
+    
+    # 4. Convert relative abundance into a percentage
+    
+    total_abundance <- sum(profile$relative_abundance, na.rm = TRUE)
+    profile$relative_abundance <- profile$relative_abundance * (100 / total_abundance)
+    
+    
+    # Save updated profile
+    profiles[[sample_id]] <- profile
+}
+
+
+# Create a relative abundance matrix, where is sample is a column and each SGB a row
+
+SGB_ft <- matrix(NA, nrow = length(unique(genome_size$genome)), ncol = length(profiles),
+                                    dimnames = list(unique(genome_size$genome), names(profiles)))
+
+## Fill the matrix with relative abundances
+for (sample_id in names(profiles)) {
+    profile <- profiles[[sample_id]]
+
+    genome_names <- match(profile$genome, unique(genome_size$genome))
+    SGB_ft[genome_names, sample_id] <- profile$relative_abundance
+}
+
+# Calculate if all samples add up to 100%
+col_sums <- colSums(SGB_ft[, 1:ncol(SGB_ft)], na.rm = TRUE)
+
+
+# Add MAG_ID as a column
+SGB_ft <- data.frame(MAG_ID = rownames(SGB_ft), SGB_ft, row.names = NULL)
+
+# Fix sample names
+## Remove "S_" prefix
+colnames(SGB_ft) = gsub("S_", "", colnames(SGB_ft))
+
+# Remove low quality samples
+LQ_samples = c("595_T3", "595_T4", "601_T3", "617_T4", "632_T3")
+SGB_ft <- SGB_ft[, !colnames(SGB_ft) %in% LQ_samples]
+
+
+# Export SGB abundance table
+write.table(SGB_ft, file = paste0(wd,"/Microbiome/rep_SGB_relative_abundance.txt"), sep = "\t", row.names = TRUE, col.names = TRUE)
+
+```
+
+
+### Rarefy SGB abundance
+For analyses that don't account for differences in library size (e.g., beta diversity analyses), it is necessary to rarefy our data to an even sampling depth.
+
+```{r rarefy data}
+
+## Rarefy SGB data
+
+
+# Extract all unique genomes (species) from the profiles
+all_genomes <- unique(unlist(lapply(profiles, function(df) df$genome)))
+
+# Create an empty matrix to store the raw counts
+raw_count_matrix <- matrix(0, nrow = length(all_genomes), ncol = length(profiles))
+rownames(raw_count_matrix) <- all_genomes
+colnames(raw_count_matrix) <- names(profiles)
+ 
+for (sample_id in seq_along(profiles)) { #seq_along makes a sequence for indexing each profile
+  profile <- profiles[[sample_id]]         # Extract the data for the current profile
+  species_indices <- match(profile$genome, all_genomes)  # Finds each each genome in all_genomes for genomes in this profile
+  raw_count_matrix[species_indices, sample_id] <- profile$filtered_read_pair_count  #fill genome counts into the matrix
+}
+
+  # Plot 
+  total_reads = as.data.frame(colSums(raw_count_matrix))
+  colnames(total_reads)[1]="Total_Reads"
+  total_reads$Sample_ID = rownames(total_reads)
+  ord_total_reads <- as.data.frame(total_reads[order(total_reads$Total_Reads), ])
+  
+  ggplot(ord_total_reads, aes(x = reorder(Sample_ID, Total_Reads), y = Total_Reads)) +
+    geom_bar(stat = "identity", fill = "steelblue") +
+    theme_minimal() +
+    labs(
+      title = "Total Reads per Sample",
+      x = "Sample ID",
+      y = "Total Reads"
+    ) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Remove low quality samples
+LQ_samples = c("S_595_T3", "S_595_T4", "S_601_T3", "S_617_T4", "S_632_T3")
+
+raw_count_matrix <- raw_count_matrix[, !colnames(raw_count_matrix) %in% LQ_samples]
+
+# Add pseudo count
+
+raw_count_matrix[is.na(raw_count_matrix)] <- 0  # Replace NAs with 0
+raw_count_matrix <- raw_count_matrix + 1  
+
+raw_count_matrix_t <- t(raw_count_matrix) #tranpose for rarefaction
+
+
+# Rarefy each sample to the minimum sample size across all profiles from that sequencing run
+## NOTE: Samples from T1 and T5 or T3 and T4 were sequenced at different depths, so we rarefied them separately.
+
+# Identify T1_T5 and T3_T4 samples
+t1_t5_samples <- grep("T1|T5", colnames(raw_count_matrix), value = TRUE)
+t3_t4_samples <- grep("T3|T4", colnames(raw_count_matrix), value = TRUE)
+
+# Calculate minimum count per group
+min_count_t1_t5 <- min(colSums(raw_count_matrix[, t1_t5_samples, drop = FALSE]))
+min_count_t3_t4 <- min(colSums(raw_count_matrix[, t3_t4_samples, drop = FALSE]))
+
+# Print values
+min_count_t1_t5  # 8,470,661 reads
+min_count_t3_t4  # 3,896,354 reads
+
+# Rarefy each subset separately
+set.seed(555)
+rarefied_t1_t5 <- rrarefy(raw_count_matrix_t[t1_t5_samples, , drop = FALSE], sample = min_count_t1_t5)
+set.seed(555)
+rarefied_t3_t4 <- rrarefy(raw_count_matrix_t[t3_t4_samples, , drop = FALSE], sample = min_count_t3_t4)
+
+# Combine back into a full rarefied matrix
+rarefied_matrix <- cbind(t(rarefied_t1_t5), t(rarefied_t3_t4))
+
+
+# Adjust rarefied values based on genome size
+for (i in seq_len(nrow(rarefied_matrix))) {
+  genome <- rownames(rarefied_matrix)[i]         # Extract the current genome name
+  genome_length <- genome_size$genome_size[genome_size$genome == genome]  # Look up genome length
+ 
+  if (length(genome_length) == 1) {               # Check if genome length exists for this genome
+    rarefied_matrix[i, ] <- rarefied_matrix[i, ] / genome_length  # Scale by genome length
+  }
+}
+
+
+#Normalize scaled data to relative abundance (sum to 100 per sample)
+rarefied_abundance_matrix <- sweep(rarefied_matrix, 2, colSums(rarefied_matrix, na.rm = TRUE), "/") * 100
+
+# Confirm each column (sample) sums up to 100%
+colSums(rarefied_abundance_matrix)
+
+# Final result: rarefied_abundance_matrix contains the rarefied, genome-scaled, relative abundance data
+SGB_ft_r = rarefied_abundance_matrix
+
+# Calculate if all samples add up to 100%
+col_sums <- colSums(SGB_ft_r[, 1:ncol(SGB_ft_r)], na.rm = TRUE)
+
+
+# Add MAG_ID
+SGB_ft_r <- data.frame(MAG_ID = rownames(SGB_ft_r), SGB_ft_r, row.names = NULL)
+colnames(SGB_ft_r) = gsub("S_", "", colnames(SGB_ft_r))
+
+# Replace missing values (NA) with 0
+SGB_ft_r[is.na(SGB_ft_r)] <- 0
+
+
+# Export SGB abundance table
+write.table(SGB_ft_r, file = paste0(wd,"/Microbiome/rep_SGB_raref_relative_abundance.txt"), sep = "\t", row.names = TRUE, col.names = TRUE)
+
+```
+
+### GTDB Taxonomy
+Format GTDB taxonomic table. 
+```{r GTDB taxonomy}
+
+# Format GTDB taxonomy
+SGB_tt <- read.table(paste0(wd,"/Microbiome/gtdbtk.bac120.summary.tsv"), header = TRUE, sep = "\t")
+
+# Make a table of the taxonomy strings
+SGB_tt_ <- colsplit(SGB_tt$classification, ";", names = c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species"))
+abbrv <- paste0(c("d", "p", "c", "o", "f", "g", "s"), "__")
+    for (i in seq_along(abbrv)) {
+      SGB_tt_[, i] <- gsub(abbrv[i], "", SGB_tt_[, i])
+    }
+
+# Fix Species names
+SGB_tt_$Species = gsub(" ", "_", SGB_tt_$Species)
+
+# Add MAG name
+SGB_tt_$MAG = SGB_tt$user_genome
+
+# Create a short MAG_ID in the format "SGB" followed by a three digit code
+SGB_tt_$MAG_ID <- paste0("SGB", sprintf("%03d", seq_len(nrow(SGB_tt_))))
+
+rownames(SGB_tt_) = SGB_tt_$MAG_ID
+
+SGB_tt = SGB_tt_
+
+# Export SGB taxonomic table
+write.table(SGB_tt, file = paste0(wd,"/Microbiome/rep_SGB_GTDB_taxonomy.txt"), sep = "\t", row.names = TRUE, col.names = TRUE)
+
+```
+
+### Phyloseq object
+Make a phyloseq object with SGB abundance data, and corresponding GTDB taxonomy and metadata.
+
+```{r Phyloseq}
+
+# Import Metadata
+
+md <- read.table(paste0(wd,"/Microbiome/Stress_Metadata.txt"), header = TRUE, sep = "\t")
+rownames(md) <- md$Sample_ID # rename rows based on sample ID
+
+## Keep only necessary columns
+md = md[,c("Sample_ID","Mouse_ID", "Sex", "Litter", "Timepoint", "Housing", "TMT", "Treatment", "Cage_ID")]
+
+## Define factors
+factors <- c("Mouse_ID", "Sex", "Timepoint", "Housing", "TMT", "Treatment", "Litter", "Cage_ID")
+md[factors] <- lapply(md[factors], as.factor)
+md$Sex <- factor(md$Sex, levels = c("Male", "Female"))
+
+## Save metadata
+md_og <- md
+
+
+# Make rarefied and unrarefied phyloseq objects
+
+ps_SGB = list()
+
+for (raref in c("unraref", "raref")) {
+  
+  # Import SGB abundance data
+  if (raref == "unraref") {
+    # Unrarefied data
+    SGB_ft <- read.table(paste0(wd,"/Microbiome/rep_SGB_relative_abundance.txt"), header=TRUE, sep = "\t")
+  } else {
+    # Rarefied data
+    SGB_ft <- read.table(paste0(wd,"/Microbiome/rep_SGB_raref_relative_abundance.txt"), header=TRUE, sep = "\t")
+  }
+  colnames(SGB_ft) = gsub("X", "", colnames(SGB_ft))
+  ft = SGB_ft[,-1]
+  rownames(ft) = SGB_ft$MAG
+  
+  # Import GTDB taxonomy
+  SGB_tt <- read.table(paste0(wd,"/Microbiome/rep_SGB_GTDB_taxonomy.txt"), header = TRUE, sep = "\t")
+  tt = SGB_tt
+  rownames(tt) = tt$MAG
+  tt <- tt[rownames(ft), , drop = FALSE] # Make rownames in ft and tt are in the same order
+  
+  # Change rownames to short MAG_ID
+  rownames(tt) = tt$MAG_ID
+  rownames(ft) = tt$MAG_ID
+  
+  # Import SGB IQ-tree
+  SGB_tree <- read.tree(paste0(wd,"/Microbiome/Rep_SGBs.treefile"))  # Load the IQ-TREE output
+  
+  # Replace the tip labels in the tree with MAG_ID
+  SGB_tree$tip.label <- tt$MAG_ID[match(SGB_tree$tip.label, tt$MAG)]
+  
+  # Create a phyloseq object
+  ps <- phyloseq(otu_table(as.matrix(ft), taxa_are_rows = TRUE),
+                 tax_table(as.matrix(tt)),
+                 sample_data(md_og),
+                 phy_tree(SGB_tree))
+  
+  # Save phyloseq object
+  ps_SGB[[raref]] = ps
+}
+
+
+# Save file with MAG_ID
+ps = ps_SGB[["unraref"]]
+
+ft = as.data.frame(otu_table(ps))
+
+# Add gene names
+ft$MAG_ID = rownames(ft)
+ft = ft[, c("MAG_ID", colnames(ft)[1:(ncol(ft)-1)])]
+
+# Export SGB abundance table
+write.table(ft, file = paste0(wd,"/Microbiome/rep_SGB_raref_relative_abundance_MAG_ID.txt"), sep = "\t", row.names = TRUE, col.names = TRUE)
+
+# Export SGB abundance table
+write.table(ft, file = paste0(wd,"/Microbiome/rep_SGB_unraref_relative_abundance_MAG_ID.txt"), sep = "\t", row.names = TRUE, col.names = TRUE)
+
+```
+
+## Beta-Diversity
+Investigate the effect of predator odor exposure (TMT) or social isolation (Housing) on the SGBs composition of the gut microbiota.
+
+### Stressor effect
+```{r stressor effect on beta-diversity}
+
+# Create dataframes to store results
+stats <- data.frame(
+  Rank = factor(),
+  Timepoint = factor(),
+  Metric = factor(),
+  Test = factor(),
+  Factor = factor(),
+  Df = numeric(),
+  SumOfSqs = numeric(),
+  R2 = numeric(),
+  F.stat = numeric(),
+  p.value = numeric()
+)
+tax_pcoa = list()
+
+
+# Define taxonomic rank
+rank = "MAG_ID"
+
+# Agglomerate the phyloseq object by the desired taxonomic level 
+ps_ = tax_glom(ps_SGB[["raref"]], taxrank = rank)
+
+# Test the effect of TMT exposure and Housing condition on the species Jaccard and Bray-Curtis dissimilarities, across all time points.
+    
+for (timepoint in list("T1", "T3", "T4", "T5")) {
+  for (metric in list("jaccard", "bray")) {
+    tryCatch({
+          
+      # Subset by Timepoint
+      ps <- subset_samples(ps_, Timepoint == timepoint)
+          
+      
+      # Calculate the dissimilarity matrix
+      if (metric == "jaccard") {
+        dist <- phyloseq::distance(ps, method = metric, normalized = TRUE, binary = TRUE)
+      } else {
+        dist <- phyloseq::distance(ps, method = metric, normalized = TRUE, binary = FALSE)
+      }
+          
+      # Ordinate PCoA of dissimilarity matrix
+      ord_PCoA <- ordinate(ps, "PCoA", distance = dist)
+      
+      # Calculate the variance explained by the first four PCs
+      PC1 <- round(ord_PCoA$values$Relative_eig[1]*100, 1)
+      PC2 <- round(ord_PCoA$values$Relative_eig[2]*100, 1)
+      PC3 <- round(ord_PCoA$values$Relative_eig[3]*100, 1)
+      PC4 <- round(ord_PCoA$values$Relative_eig[4]*100, 1)
+      pcVar2 <- PC1 + PC2
+      pcVar4 <- PC1 + PC2 + PC3 + PC4
+      
+
+      # Put ordination results in dataframe with metadata
+      df <- cbind(ord_PCoA$vectors, sample_data(ps))
+      
+      
+      #### PERM Tests ####    
+      
+      # PERMANOVA
+      set.seed(555)
+      res <- adonis2(dist ~ Sex + Litter + Housing + TMT + Cage_ID, 
+                     data = df, permutations = 999, by = "terms", parallel = 4, na.action = na.exclude)
+          
+      
+      ## Rename results columns and rownames
+      colnames(res)[4:5] = c("F.stat","p.value")
+      res <- res %>%
+            mutate(Rank = rank, Metric = metric, Timepoint = timepoint, Test = "PERMANOVA", Factor = rownames(res))
+
+      
+      # PERMDISP
+      res_disp = list()
+      
+      for (group in c("Housing", "TMT")) {
+        set.seed(555)
+        res2 <- permutest(betadisper(dist, df[,group]), pairwise = FALSE, permutations = 999)
+    
+        # Save results
+        res2 <- res2$tab # get stats
+        res2 <- res2[,-5] # remove N.Perm column
+        rownames(res2)[1] <- group # rename row
+        rownames(res2)[2] <- paste0(group,":",rownames(res2)[2]) # rename row
+        colnames(res2) <- colnames(res)[1:5] # give columns same name as PERMANOVA results
+        res2 <- res2 %>%
+          mutate(Rank = rank, Metric = metric, Timepoint = timepoint, Test = "PERMDISP", Factor = rownames(res2))
+        res_disp[[group]] = res2
+      }
+
+      # Append PERMANOVA + PERMDISP results to stats dataframe as new columns
+      stats <- bind_rows(stats, res, res_disp[["Housing"]], res_disp[["TMT"]])
+      stats$Sig_Diff = ifelse(stats$p.value <= 0.05,"TRUE","FALSE")
+      
+      
+      #### Plot PCoA ####
+
+      p <- ggplot(df, aes(x = Axis.1, y = Axis.2))
+      # Connect cagemates with a line
+      p <- p + geom_line(aes(group = Cage_ID), color="grey")
+      # Add points, representing species profile of each sample
+      p <- p + geom_point(aes(fill = Treatment, color = Treatment, shape = Sex), size = 3,  alpha = 0.8) 
+      # Define palette
+      p <- p + scale_color_manual(values = Treatment_color_pal)
+      p <- p + scale_fill_manual(values = Treatment_color_pal)
+      p <- p + scale_shape_manual(name = "Sex", values = Sex_shape_pal)
+      p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+      # Add axis labels
+      p <- p + xlab(paste0("PC1 (", PC1, "%)"))
+      p <- p + ylab(paste0("PC2 (", PC2, "%)"))
+      p <- p + ggtitle(paste(timepoint,rank,metric,"dissimilarity"))
+      p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = "gray"),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"))
+          #p <- p + coord_fixed(sqrt(PC2 / PC1))
+        p <- p + coord_fixed(ratio = 9/10)
+        p
+        
+        # Store plots
+        tax_pcoa[[timepoint]][[metric]] = p
+          
+    }, error = function(e) {
+      message(paste("Error fitting model for", timepoint, "and", metric, ":", e$message))
+    })
+  }
+}
+beep()
+
+# Save statistical results
+stats_tax_bdiv = list()
+stats_tax_bdiv[["stats"]] = stats
+
+# Export associations
+write_xlsx(stats, paste0(wd,"/Microbiome/Tax_Bdiv_MAG.xlsx"))
+
+#Export figure as a PDF
+pdf(paste0(wd,"/Microbiome/.pdf"), width = 9,height = 6)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+# Visualize results
+print(stats_tax_bdiv[["stats"]])
+print(tax_pcoa)
+
+```
+
+### Intra-individual dissimilarity (Turnover)
+Measure the species turnover within each individual mouse (intra-individual Jaccard dissimilarity) between the beginning (D0/T1) and end of the experiment (D30/T5).
+
+```{r Intra-individual differences}
+
+# Create a matrix to store results
+md = subset(md_og, Timepoint %in% c("T1", "T5"))
+
+mouse_names <- names(table(md$Mouse_ID)[table(md$Mouse_ID) == 2])
+intra_indiv_dist <- data.frame(matrix(ncol = 2, nrow = length(mouse_names)))
+colnames(intra_indiv_dist) <- c("Mouse_ID", "Dissimilarity")
+intra_indiv_dist$Mouse_ID <- mouse_names
+
+# Create dataframes to store results
+stats <- data.frame(
+  Rank = factor(),
+  Metric = factor(),
+  contrast = factor(),
+  estimate = numeric(),
+  SE = numeric(),
+  df = numeric(),
+  t.ratio = numeric(),
+  p.value = numeric()
+)
+stats_pair = stats
+
+# Define dissimilarity metric
+metric = "jaccard"
+
+# Get Species abundances
+rank = "MAG_ID"
+ps_ = tax_glom(ps_SGB[["raref"]], taxrank = rank)
+
+
+# Calculate intra-individual dissimilarity          
+for (mouse in mouse_names) {
+  # Keep only T1 and T5 data
+  ps <- subset_samples(ps_, Timepoint %in% c("T1", "T5") & Mouse_ID == mouse)
+  
+  # Dissimilarity
+  dist <- phyloseq::distance(ps, method = metric, normalized = TRUE, binary = TRUE)
+  
+  # Fill matrix
+  intra_indiv_dist[intra_indiv_dist$Mouse_ID == mouse, "Dissimilarity"] <- dist[1]
+}
+          
+# Merge results with 
+df <- data.frame(merge(intra_indiv_dist, subset(md, Timepoint == "T5"), by = "Mouse_ID"))
+          
+
+#### Mixed effects model ####
+set.seed(555)
+model <- lmerTest::lmer(Dissimilarity ~ Sex + Housing * TMT + (1|Litter/Cage_ID), df)
+
+# Save results
+res <- as.data.frame(summary(model)[["coefficients"]])
+colnames(res) = c("estimate", "SE", "df", "t.ratio", "p.value")
+res <- res %>%
+  mutate(Rank = rank, Metric = metric, contrast = rownames(res))
+stats <- bind_rows(stats, res)
+stats$Sig_Diff = ifelse(stats$p.value <= 0.05,"TRUE","FALSE")
+
+
+# Perform pairwise tests
+      
+# Define contrast matrix
+comp <- rbind("Pair_H2O - Pair_TMT" = c(1, -1, 0, 0),
+                    "Pair_H2O - Single_H2O" = c(1, 0, -1, 0),
+                    "Pair_H2O - Single_TMT" = c(1, 0, 0, -1),
+                    "Pair_TMT - Single_H2O" = c(0, 1, -1, 0),
+                    "Pair_TMT - Single_TMT" = c(0, 1, 0, -1),
+                    "Single_H2O - Single_TMT" = c(0, 0, 1, -1))
+      
+# Run pairwise comparisons
+set.seed(555)
+model = lmer(Dissimilarity ~ Sex + Treatment + (1|Litter/Cage_ID), data = df)
+pairwise = glht(model, linfct = mcp(Treatment = comp))
+summary(pairwise)
+      
+# Save results
+ci = confint(pairwise)[["confint"]]
+res_pair = data.frame(Rank = rank, Metric = metric,
+                            estimate = summary(pairwise)[["test"]][["coefficients"]],
+                            SE = summary(pairwise)[["test"]][["sigma"]],
+                            t.value = summary(pairwise)[["test"]][["tstat"]],
+                            p.value = summary(pairwise, test = adjusted("none"))[["test"]][["pvalues"]],
+                            q.value = summary(pairwise, test = adjusted("fdr"))[["test"]][["pvalues"]],
+                            Upr_CI = ci[, "upr"],
+                            Lwr_CI = ci[, "lwr"])
+res_pair$contrast = rownames(res_pair)
+res_pair$Sig.p.value = ifelse(res_pair$p.value < 0.05, TRUE, FALSE)
+stats_pair <- bind_rows(stats_pair, res_pair)
+
+
+#### Plot ####
+
+p <- ggplot(df, aes(x = Treatment , y = Dissimilarity))
+p <- p + geom_boxplot(aes(fill = Treatment), alpha=0.85, width = 0.25, outlier.shape = NA, outlier.alpha = 1)
+p <- p + geom_sina(aes(fill = Treatment, shape = Sex), size=2, alpha = 0.5, show.legend = FALSE) 
+p <- p + scale_fill_manual(values = Treatment_color_pal)
+p <- p + scale_shape_manual(values = Sex_shape_pal)
+p <- p + xlab("")
+p <- p + ylab(paste("Intra-individual",rank,metric,"dissimilarity"))
+p <- p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                legend.position = "none",
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5)) #angle = 0
+p
+
+pdf(paste0(wd, "/Microbiome/Fig_Intraindividual_Jacc_MAG.pdf"), width = 4, height = 5)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+
+# Save results
+stats_tax_intraind = list()
+stats_tax_intraind[["stats"]] = stats
+stats_tax_intraind[["stats_pair"]] = stats_pair
+
+# Export table
+write_xlsx(stats, paste0(wd,"/Microbiome/Intraindividual_MAG.xlsx"))
+write_xlsx(stats_pair, paste0(wd,"/Microbiome/Intraindividual_MAG_pair.xlsx"))
+
+# Visualize results
+print(stats_tax_intraind[["stats"]])
+print(p)
+
+
+``` 
+
+## Differential abundance
+Identify microbial taxa that changed in abundance due to exposure to predator odor or social isolation.
+
+### DESeq2
+```{r DA w/ DESeq2}
+
+# Create a dataframe to store results
+res.deg = data.frame(
+  Rank = factor(), 
+  Group = factor(), 
+  Timepoint = factor() 
+)
+
+# Load abundance table
+rank = "MAG_ID"
+ps_ = tax_glom(ps_SGB[["unraref"]], taxrank = rank)
+  
+for (group in c("Housing", "TMT")) { 
+  for (timepoint in list("T4", "T5")) {
+        
+    # Subset by timepoint
+    ps <- subset_samples(ps_, Timepoint == timepoint)
+    
+    
+    # Get abundance table
+    ft = data.frame(otu_table(ps))
+    colnames(ft) = sub("X", "", colnames(ft))
+    rownames(ft) = data.frame(tax_table(ps))[[rank]]
+    
+    
+    # Transform relative abundances into read counts
+    ## Subset total_reads by timepoint
+    total_reads_s <- total_reads[total_reads$Sample_ID %in% colnames(ft), ]
+    rownames(total_reads_s) = total_reads_s$Sample_ID
+    
+    ## Multiply relative abundances by total read counts
+    cts <- ft * total_reads_s[colnames(ft), "Total_Reads"]
+
+    ## Convert to integer counts
+    cts <- round(cts)
+    
+    ## Replace missing values (NA) with 0
+    cts[is.na(cts)] <- 0
+      
+    # Get metadata   
+    md_dds = data.frame(sample_data(ps)) %>%
+      dplyr::select(Sex, Litter, Housing, TMT, Treatment)
+
+
+    # Create a DESeq data object
+    dds <- DESeqDataSetFromMatrix(countData = cts,
+                                  colData = md_dds,
+                                  design= ~ Sex + Housing * TMT + Litter)
+    dim(dds)
+    
+    
+    # Filter low prevalence taxa
+    ## Keep only taxa w/ at least 1 count in 3 samples or more (min group size)
+    idx <- rowSums(counts(dds, normalized=FALSE) >= 1) >= 3
+    dds.f <- dds[idx, ]
+    
+    # Use "poscounts" for size factor estimation
+    # It computes the geometric mean only for positive counts, so it's better for sparse datasets
+    dds.f <- estimateSizeFactors(dds.f, type = "poscounts")
+    
+    # Estimate dispersions
+    set.seed(555)
+    dds <- DESeq(dds.f)
+    
+    
+    # Extract results and make a volcano plot for each stress group
+    for (group in c("Housing", "TMT")) {
+      # Extract results
+      if (group == "Housing") {
+        res <- results(dds, name = resultsNames(dds)[3])
+      } else {
+        res <- results(dds, name = resultsNames(dds)[4])
+      }
+              
+      # Shrink LFC
+        # estimate is more robust than the raw value
+        # Without the shrinkage, low counts have a high LFC but are non significant 
+        # (ie. we see a large difference but the variance is also so high that this observation may be due to chance only).
+        # The shrinkage corrects this and the relationship between LFC and significance is smoother.
+    
+      res.lfc <- lfcShrink(dds, coef=2, res=res, type="ashr")
+              
+      res.de = data.frame(res.lfc)
+              
+      # Add Rank info
+      res.de[rank] = rownames(res.de)
+      res.de = merge(res.de,as.data.frame(tax_table(ps)), by = rank, all=FALSE)
+      
+      # Define significance thresholds
+      FDRthreshold = 0.01
+      logFCthreshold = 1
+              
+      # Add up- and down-regulation labels
+      ## Add a column of NAs
+      res.de$diffexpressed <- "NO"
+      ## If log2Foldchange > 1 and pvalue < 0.01, set as "UP" 
+      res.de$diffexpressed[res.de$log2FoldChange > logFCthreshold & res.de$padj <= FDRthreshold] = "UP"
+      ## If log2Foldchange < 1 and pvalue < 0.01, set as "DOWN"
+      res.de$diffexpressed[res.de$log2FoldChange < -logFCthreshold & res.de$padj <= FDRthreshold] = "DOWN"
+              
+      # Save results
+      res.de$Rank = rank
+      res.de$Group = group
+      res.de$Timepoint = timepoint
+      res.deg = bind_rows(res.deg, res.de)
+    }
+  } 
+}
+beep()
+
+# Save results
+res.deg <- res.deg %>% distinct()
+Deseq_df = res.deg
+
+# Export table
+write_xlsx(Deseq_df, paste0(wd,"/Microbiome/Tax_DESeq_MAG.xlsx"))
+
+```
+
+#### Volcano plots
+Make volcano plots of DESeq2 results, highlighting concordant taxa. This was the code used to produce Figure 2A.
+
+```{r DESeq2 volcano plots}
+
+# Create a dataframe to store results
+tax_volcano = list()
+  
+for (group in c("Housing", "TMT")) { 
+  for (timepoint in list("T4", "T5")) {
+      
+    # Subset DESeq results
+    res.de = subset(Deseq_df, Group == group & Timepoint == timepoint)
+              
+      
+    #Color Palette
+    Direction_color_pal <- c("grey55", get(paste0(group,"_color_pal")))
+    names(Direction_color_pal) <- c("NO", "DOWN", "UP")
+      
+    
+    # # Get top 3 most significantly DOWN and UP regulated taxa
+    # top_down <- res.de %>%
+    #   filter(diffexpressed == "DOWN") %>%
+    #   arrange(padj) %>%
+    #   head(3)
+    # top_up <- res.de %>%
+    #   filter(diffexpressed == "UP") %>%
+    #   arrange(padj) %>%
+    #   head(3)
+    # top_labels <- bind_rows(top_down, top_up)
+    
+    # Find taxa that are DA at both T4 and T5
+    da = subset(Deseq_df, diffexpressed != "NO")
+      
+    da$Enrich_group <- ifelse(da$Group == "Housing" & da$diffexpressed == "DOWN", "Pair", 
+                                ifelse(da$Group == "Housing" & da$diffexpressed == "UP", "Single",
+                                ifelse(da$Group == "TMT" & da$diffexpressed == "DOWN", "H2O", "TMT")))
+      
+    da_wide <- da %>%
+        group_by(Group) %>%
+        dplyr::select(MAG_ID, Timepoint, Enrich_group) %>%
+        pivot_wider(names_from = Timepoint, values_from = Enrich_group, names_prefix = "Enrich_")
+      
+    da_wide$Same_DA = ifelse(da_wide$Enrich_T4 == da_wide$Enrich_T5, TRUE, FALSE)
+    da_taxa_df = subset(da_wide, Same_DA == TRUE & Group == group)
+    
+    labels = subset(res.de, MAG_ID %in% da_taxa_df$MAG_ID)
+    
+    
+    #Volcano Plot
+    p <- ggplot(data=res.de, aes(x=log2FoldChange, y=-log10(padj)))
+    p <- p + geom_hline(yintercept=-log10(FDRthreshold), col="red3", alpha = 0.5)
+    p <- p + geom_vline(xintercept=c(-logFCthreshold, logFCthreshold), col="red3", alpha = 0.5)
+    p <- p + geom_point(aes(fill = diffexpressed), shape = 21, size=5, alpha = 0.5, show.legend = FALSE)
+    
+    # Add taxa labels to the volcano plot
+    p <- p + geom_text_repel(data = labels,
+                         aes_string(label = rank),
+                         color = "grey25",
+                         size = 8, show.legend = FALSE,
+                         box.padding = unit(0.35, "lines"),
+                         point.padding = unit(0.5, "lines"),
+                         max.overlaps = 100) #, nudge_x = 0, nudge_y = p_val <= 0.05
+    
+    # Add annotation for DOWN on the left
+    p <- p + annotate("text", 
+                                x = -20, #-max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to left
+                                y = 19, #max(-log10(res.de$padj)) + 1,  # Slightly above max y-value
+                                label = paste0("", sum(res.de$diffexpressed == "DOWN")), #\u2193
+                                size = 8, 
+                                #fontface = "bold", 
+                                hjust = 0)
+    # Add annotation for UP on the right
+    p <- p + annotate("text", 
+                                x = 20, #max(abs(res.de$log2FoldChange)) * 0.75,  # Adjust position to right
+                                y = 19, #max(-log10(res.de$padj)) + 1, 
+                                label = paste0("", sum(res.de$diffexpressed == "UP")), #\u2191
+                                size = 8, 
+                                #fontface = "bold", 
+                                hjust = 1)
+    
+    p <- p + scale_fill_manual(values = Direction_color_pal)
+    #p <- p + scale_colour_manual(values = Direction_color_pal)
+    # p <- p + xlim(c(-max(abs(res.de$log2FoldChange)), max(abs(res.de$log2FoldChange))))
+    p <- p + xlim(c(-30,30))
+    p <- p + ylim(c(0,20))
+    p <- p + ggtitle(paste("Volcano Plot:",rank, group,timepoint,sep = " "))
+    p <- p + xlab(expression(Log[2]~"(Fold Change)"))
+    p <- p + ylab(expression(-Log[10]~"(FDR-adjusted " * italic(p) * "-value)"))
+    p <- p + theme_minimal()
+    p <- p + theme(
+                      panel.background = element_rect(fill = "transparent",colour = "gray"),
+                      plot.background = element_rect(fill = "transparent",colour = NA),
+                      legend.background = element_rect(fill = "transparent",colour = NA),
+                      panel.grid.major = element_blank(),
+                      panel.grid.minor = element_blank(),
+                      legend.key = element_rect(fill = "transparent",colour = NA),
+                      axis.line = element_line(color = "gray50"),
+                      axis.text=element_text(size=20),
+                      axis.title=element_text(size=22))
+    p
+    
+    # Save plots
+    tax_volcano[[group]][[timepoint]] = p
+          
+  } 
+}
+beep()
+
+# Export the figure
+for (group in c("Housing", "TMT")) { 
+  for (timepoint in list("T4", "T5")) {
+    pdf(paste0(wd, "/Microbiome/Fig_Volcano_",group,"_",timepoint,"_labels_DA.pdf"), width = 6, height = 6)
+    print(tax_volcano[[group]][[timepoint]])
+    while (!is.null(dev.list()))  dev.off()
+  } 
+}
+
+# Visualize results
+print(tax_volcano)
+
+```
+
+#### Taxonomic Enrichment
+Assess whether DA SGBs in each group are enriched in a certain taxonomic rank.
+```{r taxonomic enrichment}
+
+
+# Get DA species
+df = subset(Deseq_df, diffexpressed != "NO")
+
+df$Enrich_group <- ifelse(df$Group == "Housing" & df$diffexpressed == "DOWN", "Pair", 
+                          ifelse(df$Group == "Housing" & df$diffexpressed == "UP", "Single",
+                          ifelse(df$Group == "TMT" & df$diffexpressed == "DOWN", "H2O", "TMT")))
+
+
+# Initialize results storage
+all_enrichment_results <- list()
+
+
+rank = "Family"
+group = "TMT"
+
+# Loop over each rank
+for (rank in c("Phylum", "Class", "Order", "Family")) {
+  
+  # Loop over each unique Enrich_group
+  for (group in unique(df$Enrich_group)) {
+    
+    # Subset differentially abundant SGBs for the given group
+    df_subset <- df %>%
+      filter(Enrich_group == group) %>%
+      group_by(.data[[rank]]) %>%
+      summarise(Diff_Abundant = n(), .groups = "drop")
+    
+    # Subset the full SGB universe for comparison
+    sgb_subset <- SGB_tt %>%
+      group_by(.data[[rank]]) %>%
+      summarise(Full_Set = n(), .groups = "drop")
+    
+    # Merge both counts, replacing missing values with 0
+    enrichment_df <- full_join(df_subset, sgb_subset, by = rank) %>%
+      replace_na(list(Diff_Abundant = 0, Full_Set = 0))
+    
+    # Get total counts
+    total_deg <- sum(enrichment_df$Diff_Abundant)
+    total_sgb <- sum(enrichment_df$Full_Set)
+    
+    # Perform Fisher's Exact Test for each taxonomic group
+    enrichment_results <- enrichment_df %>%
+      rowwise() %>%
+      mutate(
+        Fisher_pval = list(
+          fisher.test(matrix(
+            c(Diff_Abundant, total_deg - Diff_Abundant,
+              Full_Set, total_sgb - Full_Set),
+            nrow = 2, byrow = TRUE
+          ))$p.value
+        )
+      ) %>%
+      ungroup()
+    
+    # Adjust p-values for multiple testing
+    enrichment_results <- enrichment_results %>%
+      mutate(FDR_pval = p.adjust(Fisher_pval, method = "fdr"))
+    
+    # Store results
+    enrichment_results <- enrichment_results %>%
+      mutate(Rank = rank, Enrich_group = group)
+    
+    all_enrichment_results[[paste(rank, group, sep = "_")]] <- enrichment_results
+  }
+}
+
+# Combine all results into a single dataframe
+final_enrichment_df <- bind_rows(all_enrichment_results)
+
+# Filter significant results
+significant_enrichments <- final_enrichment_df %>%
+  filter(FDR_pval < 0.1)
+
+# Print significant enrichments
+print(significant_enrichments)
+
+
+
+# Find taxa that are DA at both T4 and T5
+df = subset(Deseq_df, diffexpressed != "NO")
+
+df$Enrich_group <- ifelse(df$Group == "Housing" & df$diffexpressed == "DOWN", "Pair", 
+                          ifelse(df$Group == "Housing" & df$diffexpressed == "UP", "Single",
+                          ifelse(df$Group == "TMT" & df$diffexpressed == "DOWN", "H2O", "TMT")))
+df_wide <- df %>%
+  group_by(Timepoint, Group) %>%
+  dplyr::select(MAG_ID, Group, Enrich_group) %>%
+  pivot_wider(names_from = Group, values_from = Enrich_group, names_prefix = "Enrich_")
+
+# For UP-reg SGBs
+df_wide_s = df_wide
+df_wide_s$Enrich_TMT = sub("H2O",NA,df_wide_s$Enrich_TMT)
+df_wide_s$Enrich_Housing = sub("Pair",NA,df_wide_s$Enrich_Housing)
+
+# Create a list for the Venn diagram
+venn_list <- list(
+  TMT = df_wide_s %>% filter(!is.na(Enrich_TMT)) %>% pull(MAG_ID),
+  Housing = df_wide_s %>% filter(!is.na(Enrich_Housing)) %>% pull(MAG_ID)
+)
+
+# Plot Venn diagram
+p = ggvenn(venn_list, 
+           columns = names(venn_list), 
+           show_percentage = FALSE,
+           fill_color = c(TMT_color_pal[[2]], Housing_color_pal[[2]]),
+           fill_alpha = 0.5,
+           stroke_color = "gray1",
+           stroke_alpha = 0.01,
+           stroke_size = 0.01,
+           stroke_linetype = "solid",
+           set_name_color = "gray10",
+           set_name_size = 4.5,
+           text_color = "gray10",
+           text_size = 4)
+p = p + ggtitle(paste0("Overlap in DA UP SGBs")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+p
+
+# Export the combined figure
+pdf(paste0(wd, "/Microbiome/Fig_DA_Venn_UP.pdf"), width = 6, height = 6)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+
+
+# Identify different categories
+TMT_only <- setdiff(venn_list$TMT, venn_list$Housing)
+#Housing_only <- setdiff(venn_list$Housing, venn_list$TMT)
+Shared <- intersect(venn_list$TMT, venn_list$Housing)
+
+# Total number of unique SGBs in the dataset
+all_SGBs <- unique(c(venn_list$TMT, venn_list$Housing))
+total_SGBs <- length(all_SGBs)
+
+# Create contingency table
+contingency_table <- matrix(
+  c(length(TMT_only),  # Stressor-specific SGBs
+    length(Shared),                           # General SGBs
+    total_SGBs - (length(TMT_only)),  # Not stressor-specific
+    total_SGBs - length(Shared)),             # Not general SGBs
+  nrow = 2,
+  byrow = TRUE
+)
+
+rownames(contingency_table) <- c("Present", "Absent")
+colnames(contingency_table) <- c("Stressor-Specific", "General")
+
+# Perform Fisher’s Exact Test (recommended for small sample sizes)
+UP_fisher_test <- fisher.test(contingency_table)
+UP_fisher_test
+
+
+
+
+# For DOWN-reg SGBs
+df_wide_s = df_wide
+df_wide_s$Enrich_TMT = sub("TMT",NA,df_wide_s$Enrich_TMT)
+df_wide_s$Enrich_Housing = sub("Single",NA,df_wide_s$Enrich_Housing)
+
+# Create a list for the Venn diagram
+venn_list <- list(
+  TMT = df_wide_s %>% filter(!is.na(Enrich_TMT)) %>% pull(MAG_ID),
+  Housing = df_wide_s %>% filter(!is.na(Enrich_Housing)) %>% pull(MAG_ID)
+)
+
+# Plot Venn diagram
+p = ggvenn(venn_list, 
+           columns = names(venn_list), 
+           show_percentage = FALSE,
+           fill_color = c(TMT_color_pal[[1]], Housing_color_pal[[1]]),
+           fill_alpha = 0.5,
+           stroke_color = "gray1",
+           stroke_alpha = 0.01,
+           stroke_size = 0.01,
+           stroke_linetype = "solid",
+           set_name_color = "gray10",
+           set_name_size = 4.5,
+           text_color = "gray10",
+           text_size = 4)
+p = p + ggtitle(paste0("Overlap in DA UP SGBs")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+p
+
+# Identify different categories
+TMT_only <- setdiff(venn_list$TMT, venn_list$Housing)
+#Housing_only <- setdiff(venn_list$Housing, venn_list$TMT)
+Shared <- intersect(venn_list$TMT, venn_list$Housing)
+
+# Total number of unique SGBs in the dataset
+all_SGBs <- unique(c(venn_list$TMT, venn_list$Housing))
+total_SGBs <- length(all_SGBs)
+
+# Create contingency table
+contingency_table <- matrix(
+  c(length(TMT_only),  # Stressor-specific SGBs
+    length(Shared),                           # General SGBs
+    total_SGBs - (length(TMT_only)),  # Not stressor-specific
+    total_SGBs - length(Shared)),             # Not general SGBs
+  nrow = 2,
+  byrow = TRUE
+)
+
+rownames(contingency_table) <- c("Present", "Absent")
+colnames(contingency_table) <- c("Stressor-Specific", "General")
+
+# Perform Fisher’s Exact Test (recommended for small sample sizes)
+fisher_test <- fisher.test(contingency_table)
+fisher_test
+
+
+
+
+
+# Create a list for the Venn diagram
+venn_list <- list(
+  TMT = df %>% filter(Group == "TMT") %>% pull(MAG_ID),
+  Housing = df %>% filter(Group == "Housing") %>% pull(MAG_ID)
+)
+
+# Plot Venn diagram
+p = ggvenn(venn_list, 
+           columns = names(venn_list), 
+           show_percentage = FALSE,
+           fill_color = c(TMT_color_pal[[2]], Housing_color_pal[[2]]),
+           fill_alpha = 0.5,
+           stroke_color = "gray1",
+           stroke_alpha = 0.01,
+           stroke_size = 0.01,
+           stroke_linetype = "solid",
+           set_name_color = "gray10",
+           set_name_size = 4.5,
+           text_color = "gray10",
+           text_size = 4)
+p = p + ggtitle(paste0("Overlap in DA UP SGBs")) +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+p
+
+```
+
+#### SGB Tree
+Make a phylogenetic tree of SGBs, with branches colored by Phylum and tiles showing DA taxa.
+
+```{r SGB Tree}
+
+library(DECIPHER)
+library(phangorn)
+
+
+# Starting phyloseq object
+ps <- subset_samples(ps_SGB[["unraref"]], Timepoint %in% c("T4", "T5"))
+
+# Get DA species
+df = subset(Deseq_df, diffexpressed != "NO")
+
+df$Enrich_group <- ifelse(df$Group == "Housing" & df$diffexpressed == "DOWN", "Pair", 
+                          ifelse(df$Group == "Housing" & df$diffexpressed == "UP", "Single",
+                          ifelse(df$Group == "TMT" & df$diffexpressed == "DOWN", "H2O", "TMT")))
+
+
+# Convert the tree to a data frame for filtering
+tree_df <- fortify(ps)
+
+# Ensure MAG_IDs are present in tree labels
+subset_data <- tree_df[tree_df$label %in% df$MAG_ID, ]
+
+
+#### Plot SGB Tree ####   
+
+rank = "Class"
+              
+# Plot the tree
+p <- ggtree(ps, layout="circular", branch.length='none')
+
+# Color tips by taxonomic rank
+p <- p + geom_tippoint(aes_string(color=rank), size=1)
+p <- p + scale_color_manual(values = rank_colors[[rank]])
+
+# Add tip labels
+p <- p + geom_tiplab(
+    aes_string(label = "label", color = rank),
+    align = TRUE,         # Align labels to avoid overlap
+    linetype = "blank",  # Connect labels with dashed lines
+    size = 3.5,             # Adjust text size
+    offset = 0.2,         # Control distance from tip points
+    show.legend = FALSE
+)
+
+# Add tiles to DA taxa
+p <- p + new_scale("color") 
+p <- p + geom_fruit(data=subset(df, Timepoint == "T5" & Enrich_group %in% c("H2O", "TMT")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.25, size = 3, grid.params=list()) #offset = 0.13
+p <- p + geom_fruit(data=subset(df, Timepoint == "T5" & Enrich_group %in% c("Pair", "Single")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.05, size = 3, grid.params=list())
+p <- p + geom_fruit(data=subset(df, Timepoint == "T4" & Enrich_group %in% c("H2O", "TMT")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.05, size = 3, grid.params=list())
+p <- p + geom_fruit(data=subset(df, Timepoint == "T4" & Enrich_group %in% c("Pair", "Single")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.05, size = 3, grid.params=list())
+p <- p + scale_color_manual(values = c(Housing_color_pal, TMT_color_pal))
+    
+p
+
+
+# Plot the tree
+p <- ggtree(ps, layout="circular", branch.length='none')
+
+# Color tips by taxonomic rank
+p <- p + geom_tippoint(aes_string(color=rank), size=2)
+p <- p + scale_color_manual(values = rank_colors[[rank]])
+
+# Add tiles to DA taxa
+p <- p + new_scale("color") 
+p <- p + geom_fruit(data=subset(df, Timepoint == "T5" & Enrich_group %in% c("H2O", "TMT")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.03, size = 2, grid.params=list()) #offset = 0.13
+p <- p + geom_fruit(data=subset(df, Timepoint == "T5" & Enrich_group %in% c("Pair", "Single")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.03, size = 2, grid.params=list())
+p <- p + geom_fruit(data=subset(df, Timepoint == "T4" & Enrich_group %in% c("H2O", "TMT")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.03, size = 2, grid.params=list())
+p <- p + geom_fruit(data=subset(df, Timepoint == "T4" & Enrich_group %in% c("Pair", "Single")), 
+                    geom=geom_point, mapping=aes(y=MAG_ID, color=Enrich_group),
+                    offset = 0.03, size = 2, grid.params=list())
+p <- p + scale_color_manual(values = c(Housing_color_pal, TMT_color_pal))
+
+# Add tip labels
+p <- p + new_scale("color")
+p <- p + geom_tiplab(
+    aes_string(label = "label", color = rank),
+    align = TRUE,         # Align labels to avoid overlap
+    linetype = "blank",  # Connect labels with dashed lines
+    size = 4.5,             # Adjust text size
+    offset = 3,         # Control distance from tip points
+    show.legend = FALSE
+)
+p <- p + scale_color_manual(values = rank_colors[[rank]])
+    
+p
+
+# Export as PDF
+pdf(paste0(wd,"/Microbiome/SGB_tree_DA_species_color_",rank,"_lab_2.pdf"), width = 12, height = 12)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+
+
+```
+
+
+
+# GM & Transcriptome Association
+Investigate associations between the gut microbiota and host gene expression, after accounting for the effects of the stressors.
+
+## Composition
+Test the associations between the species profile at D22 (T4) and D30 (T5) and host adrenal and VAT gene expression at D33 within each stressor treatment group.
+
+```{r species composition vs host transcriptome}
+
+# Make dataframe to store results 
+stats <- data.frame(
+    Tissue = factor(),
+    Rank = factor(),
+    Timepoint = factor(),
+    Group = factor(),
+    Level = factor(),
+    Tax.metric = character(),
+    Trans.metric = character(),
+    Test = character(),
+    Factor = character()
+  )
+procrustes_pcoa = list()
+
+rank = "Species"
+timepoint = "T5"
+metric = "jaccard"
+tissue = "Adr"
+group = "TMT"
+level = unique(md_og[,group])[[1]]
+
+
+for (tissue in c("VAT", "Adr")) {
+      
+  #### Calculate transcriptomic dissimilarity matrix ####
+      
+  # Get DESeq object
+  dds.f <- DESeq_obj[[tissue]]
+        
+  # Variance stabilizing transformation (to control for differences in library size)
+  ## We used rlog() instead of vst() because it is more robust in the case when the size factors vary widely.
+  rld = rlog(dds.f, blind=FALSE)
+      
+  # Run analyses within each stressor group
+  for (group in c("TMT", "Housing")) {
+    for (level in unique(md_og[,group])) {
+      
+      # Subset by level
+      md_s = md[md[, group] == level, ]
+      rld_s <- rld[, intersect(colnames(rld), rownames(md_s))]
+      
+      # Calculate distance matrix
+      trans_dist <- vegdist(t(assay(rld_s)), method = "euclidean")
+      trans_dist_og = as.matrix(trans_dist)
+      
+      
+      # Load taxonomic phyloseq object
+      ps_ <- tax_glom(ps_SGB[["raref"]], taxrank = rank)
+              
+      for (timepoint in list("T4", "T5")) {
+        for (metric in list("jaccard", "bray")) {
+          tryCatch({        
+          
+          #### Calculate taxonomic dissimilarity matrix ####
+          
+          ps <- subset_samples(ps_, Timepoint == timepoint & get(group) == level)
+              
+          # Calculate beta diversity
+          if (metric == "jaccard") {
+            tax_dist <- phyloseq::distance(ps, method = metric, normalized = TRUE, binary = TRUE)
+          } else {
+            tax_dist <- phyloseq::distance(ps, method = metric, normalized = TRUE, binary = FALSE)
+          }
+          
+          # Remove timepoint from sample names
+          tax_dist = as.matrix(tax_dist)
+          row.names(tax_dist) = substr(row.names(tax_dist), 1, nchar(row.names(tax_dist)) - 3)
+          colnames(tax_dist) = substr(colnames(tax_dist), 1, nchar(colnames(tax_dist)) - 3)
+              
+              
+          #### Calculate association between taxonomic and transcriptomic matrices ####
+
+          # Match samples in both matrices
+          trans_dist = trans_dist_og
+          common_samples <- intersect(row.names(tax_dist), row.names(trans_dist))
+          tax_dist <- as.matrix(tax_dist)[common_samples, common_samples]
+          trans_dist <- as.matrix(trans_dist)[common_samples, common_samples]
+              
+          
+          # Mantel test
+          set.seed(555)
+          mantel_res <- mantel(as.dist(tax_dist), as.dist(trans_dist), method = "pearson", permutations=999)
+
+          ## Save results
+          res = data.frame(Group = group, Level = level,
+                           Rank = rank, Tissue = tissue, Timepoint = timepoint,
+                           Tax.metric = metric, Trans.metric = "euclidean",
+                           Pearson.R = mantel_res$statistic, Mantel.p.value = mantel_res$signif)
+              
+              
+          # Procrustes
+
+          ## Ordinate both matrices
+          tax_pcoa <- cmdscale(tax_dist, k = min(nrow(tax_dist) - 1, ncol(tax_dist) - 1), eig=TRUE)
+          trans_pcoa <- cmdscale(trans_dist, k = min(nrow(trans_dist) - 1, ncol(trans_dist) - 1))
+
+          ## Procrustes analysis
+          set.seed(555)
+          ptest <- protest(tax_pcoa$points, trans_pcoa, scores = "sites", permutations=999, symmetric=FALSE)
+
+          ## Save results
+          res$Procrustes.sum.sqr = ptest$ss
+          res$Procrustes.p.value = ptest$signif
+
+          
+          # Save loop results 
+          stats <- bind_rows(stats, res)
+
+              
+          #### Make Procrustes plots ####
+
+          # Extract aligned coordinates
+          tax_coords <- as.data.frame(ptest$X)
+          colnames(tax_coords) = paste0("Axis.",1:length(colnames(tax_coords)))
+
+          trans_coords <- as.data.frame(ptest$Yrot)
+          colnames(trans_coords) = paste0("Axis.",1:length(colnames(trans_coords)))
+
+          # Combine and add metadata
+          tax_coords$Mouse_ID <- rownames(tax_coords)
+          trans_coords$Mouse_ID <- rownames(trans_coords)
+
+          tax_coords$Data_Type <- "Taxonomic"
+          trans_coords$Data_Type <- "Transcriptomic"
+
+          df <- rbind(tax_coords, trans_coords)
+          df = merge(df, subset(md_og, Timepoint == timepoint), by = "Mouse_ID")
+
+
+          # Calculate variance explained by each axis
+          total_var <- sum(tax_pcoa$eig[tax_pcoa$eig > 0])
+          PC1 <- round((tax_pcoa$eig[1]/total_var)*100, 1)
+          PC2 <- round((tax_pcoa$eig[2]/total_var)*100, 1)
+          PC3 <- round((tax_pcoa$eig[3]/total_var)*100, 1)
+          PC4 <- round((tax_pcoa$eig[4]/total_var)*100, 1)
+          pcVar2 <- PC1 + PC2
+          pcVar4 <- PC1 + PC2 + PC3 + PC4
+
+          
+          # Plot PCoAs
+          p <- ggplot(df, aes(x = Axis.1, y = Axis.2))
+          p <- p + geom_line(aes(group = Mouse_ID), color="grey")
+          p <- p + geom_point(aes_string(fill= group, color= group, shape= "Data_Type"), size=3, alpha=0.8)
+          p <- p + scale_color_manual(name = group, values = get(paste0(group, "_color_pal")))
+          p <- p + scale_fill_manual(name = group, values = get(paste0(group, "_color_pal")))
+          p <- p + scale_shape_manual(values = c("Taxonomic" = 21, "Transcriptomic" = 24))
+          p <- p + xlab(paste0("PC1 (", PC1, "%)"))
+          p <- p + ylab(paste0("PC2 (", PC2, "%)"))
+          p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+          p <- p + ggtitle(
+            paste("Procrustes of",rank,timepoint,metric,"dissimilarity and",tissue,"euclidean distance"))
+          p <- p + annotate("text", 
+                            x = max(df[["Axis.1"]]) * 0.75,
+                            y = min(df[["Axis.2"]]) * 0.95,
+                            label = paste("P-value:", format(ptest$signif,scientific = T,digits = 3)),
+                            size = 3.75, color = "black")
+          p <- p + theme(
+                    panel.background = element_rect(fill = "transparent",colour = "gray"),
+                    plot.background = element_rect(fill = "transparent",colour = NA),
+                    legend.background = element_rect(fill = "transparent",colour = NA),
+                    panel.grid.major = element_blank(),
+                    panel.grid.minor = element_blank(),
+                    legend.key = element_rect(fill = "transparent",colour = NA),
+                    axis.line = element_line(color = "gray50"))
+          p <- p + coord_fixed(ratio = 9/10)
+          p
+          
+          # Save procrustes plots
+          procrustes_pcoa[[group]][[level]][[tissue]][[timepoint]][[metric]] = p
+          
+          }, error = function(e) {
+            message(paste("Error:",group,level,tissue,metric,":",e$message))
+          })
+        }
+      }
+    }
+  }
+}
+beep()
+
+# Save results
+TaxvTrans_Mantel_Procrustes = stats
+TaxvTrans_Mantel_Procrustes$Sig_M_P = ifelse(TaxvTrans_Mantel_Procrustes$Mantel.p.value <= 0.05 & TaxvTrans_Mantel_Procrustes$Procrustes.p.value <= 0.05, TRUE, FALSE)
+
+# Export results
+write_xlsx(TaxvTrans_Mantel_Procrustes, paste0(wd,"/Microbiome/Tax_Trans_Mantel_Procrustes.xlsx"))
+
+# Export the figures
+group = "TMT"
+level = "TMT"
+tissue = "Adr"
+metric = "jaccard"
+timepoint = "T5"
+
+pdf(paste0(wd,"/Microbiome/Fig_Procrustes_",group,"_",level,"_",tissue,"_",rank,"_",metric,"_",timepoint,".pdf"), width = 8, height = 6)
+  print(procrustes_pcoa[[group]][[level]][[tissue]][[timepoint]][[metric]])
+while (!is.null(dev.list()))  dev.off()
+
+group = "Housing"
+level = "Single"
+tissue = "VAT"
+
+pdf(paste0(wd, "/Microbiome/Fig_Procrustes_",group,"_",level,"_",tissue,"_",rank,"_",metric,"_",timepoint,".pdf"), width = 8, height = 6)
+  print(procrustes_pcoa[[group]][[level]][[tissue]][[timepoint]][[metric]])
+while (!is.null(dev.list()))  dev.off()
+
+
+```
+
+### Mantel Heatmap
+Make a heatmap of the Mantel test results, showing the strength and significance of the association between the transcriptomic and taxonomic dissimilarity matrices.
+
+```{r Mantel Heatmap}
+
+# Create a list to save plots
+mantel_heatmaps = list()
+
+rank = "Species"
+metric = "jaccard"
+
+for (metric in c("jaccard", "bray")) {
+  # Subset data
+  res = subset (TaxvTrans_Mantel_Procrustes, Tax.metric == metric)
+          
+  # Define comparisons
+  res$Comparison = paste0(res$Rank," composition \n (",res$Tax.metric,") \n vs \n", res$Tissue, " transcriptome \n (",res$Trans.metric,")")
+    
+          
+  # Add significance levels based on p-values
+  res$Significance <- cut(res$Mantel.p.value, 
+                          breaks = c(-Inf, 0.001, 0.01, 0.05, Inf), 
+                          labels = c("4", "3", "2", "1"))
+  res$Significance <- as.numeric(as.character(res$Significance))
+          
+  # Plot associations
+  p = ggplot(res, aes(x = gsub("_", "\n", Level), y = Comparison)) +
+      geom_point(aes(fill = Pearson.R, stroke = Significance), size = 5, shape = 21, color = "gray25") +
+      scale_fill_gradientn(colors = brewer.pal(9, "RdYlBu"), limits = c(-max(abs(res$Pearson.R)), max(abs(res$Pearson.R))), name = "Pearson's R") +
+      #scale_size(range = c(2, 10), name = "Pearson's R") +
+      facet_grid(Timepoint ~ Group, scales="free") +
+      labs(title = "Mantel Test Associations", x = "", y = "") +
+      scale_x_discrete(position = "top") + # x-axis at the top
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 0, hjust = 0.5, vjust = 1), 
+                axis.title.x.top = element_text(size = 12), # Adjust title size if needed
+                axis.text.x.top = element_text(size = 10),
+                strip.placement = "outside",  # Place facet labels above x-axis
+                strip.text = element_text(size = 12, face = "bold"),
+                panel.background = element_rect(fill = NA, color = "gray50", size = 0.75),
+                panel.grid.major = element_line(color = "gray85", size = 0.25),
+                panel.grid.minor = element_line(color = "gray", size = 0.25))
+  p
+          
+  # Save Heatmap
+  mantel_heatmaps[[metric]] = p
+  
+}
+
+# Export the figure
+pdf(paste0(wd, "/Microbiome/Fig_Mantel_heatmap_jaccard.pdf"), width = 8, height = 6)
+print(mantel_heatmaps[["jaccard"]])
+while (!is.null(dev.list()))  dev.off()
+
+# Visualize results
+print(mantel_heatmaps)
+
+```
+
+## Abundance
+Investigate correlations between the abundance of stressor-associated species and the expression of gene modules, identified through a Gene Correlation Network Analysis (WGCNA).
+
+### Enriched expression
+```{r enriched genes}
+
+
+#### Assoc w/ DA SGBs ####
+
+stats <- data.frame(
+    Tissue = factor(),
+    Group = factor(),
+    Rank = factor(),
+    Timepoint = factor(),
+    Taxa = character(),
+    Gene = character()
+  )
+
+group = "TMT"
+timepoint = "T5"
+    
+# Select phyloseq object
+rank = "MAG_ID"
+ps_ <- tax_glom(ps_SGB[["raref"]], taxrank = rank) 
+
+for (tissue in c("VAT")) { #"Adr", 
+  for (group in c("TMT", "Housing")) {  #, "Treatment"
+    for (timepoint in c("T4", "T5")) { 
+      tryCatch({
+        
+        # Subset by timepoint
+        ps <- subset_samples(ps_, Timepoint == timepoint)
+  
+        # CLR transform data
+        ## Note that small pseudocount of min(relative abundance)/2 is added to zeroes
+        ps_clr <- microbiome::transform(ps, 'clr')
+  
+        # Extract abundance taxa
+        ft = (as.data.frame(t(otu_table(ps_clr))))
+        colnames(ft) = tax_table(ps_clr)[,rank]
+            
+        # Remove the last 3 characters to create Mouse_ID
+        ft$Mouse_ID <- substr(rownames(ft), 1, nchar(rownames(ft)) - 3)
+         
+           
+        if (group != "Treatment") {
+      
+          # Extract antimicrobial defense genes
+          go_bp = GO_enrich[[tissue]][[group]][["na"]]@result
+          
+          if (nrow(go_bp) > 0) {
+            # Antimicrobial genes
+            amps = go_bp %>%
+              filter(ID == "GO:0061844") %>%
+              pull(geneID)  # Extract the Gene column
+            amps <- strsplit(amps, "/")[[1]] 
+          
+            # Endocrine
+            end = go_bp %>%
+              filter(ID == "GO:0035270") %>%
+              pull(geneID)  # Extract the Gene column
+            end <- strsplit(end, "/")[[1]] 
+            
+            # Focus genes
+            genes = c(amps, end)
+          
+          
+            # Get DESeq object
+            dds = DESeq_obj[[tissue]]
+        
+            # Get normalized counts
+            norm_cts <- counts(dds, normalized = TRUE)
+            
+            
+            # Get counts for marker genes
+            cts_mark <- as.data.frame(norm_cts[rownames(norm_cts) %in% genes, ])
+            
+            cts_mark = as.data.frame(t(cts_mark))
+            cts_mark$Mouse_ID = rownames(cts_mark)
+            
+            cts_mark_md = merge(md_og, cts_mark, by = "Mouse_ID")
+            
+            df = merge(cts_mark_md, ft, by = "Mouse_ID")
+            
+            
+            #### List DA taxa ####
+            
+            # Get DA species
+            da = subset(Deseq_df, Group == group & Timepoint == timepoint & diffexpressed != "NO")
+            colnames(da)[4] = "Taxa"
+    
+            # Loop through taxa and genes
+            taxa = unique(da$Taxa)[1]
+            gene = genes[1]
+            for (taxa in unique(da$Taxa)) {
+              for (gene in genes) {
+            
+                ## Linear mixed effects model
+                formula <- formula(paste0(gene, " ~ ", taxa, "+ Sex + (1|Litter)")) #(1|Treatment)
+                set.seed(555)
+                model = lmer(formula, data = df)
+                res <- as.data.frame(summary(model)[["coefficients"]])
+    
+                # Get R2 from LMM
+                rsq = rsq.lmm(model,adj=FALSE)
+                res$rsq.fixed = rsq$fixed
+                colnames(res)[1:5] = c("estimate", "SE", "df", "t.ratio", "p.value")
+                
+                
+                ## Full correlation
+                set.seed(555)
+                
+                # Get Spearman's Rho
+                spearman_corr <- cor(df[, taxa], df[, gene], method = "spearman")
+
+                # Get the p-value
+                spearman_test <- cor.test(df[, taxa], df[, gene], method = "spearman")
+                
+                # Store the Spearman correlation and p-value
+                res$spearman.rho <- spearman_corr
+                res$spearman.p.value <- spearman_test$p.value
+    
+    
+                ## Partial correlation
+    
+                # Convert categorical variables into dummy numerical values
+                dummy_vars <- dummyVars(formula(paste0(" ~ Treatment")), data = df)
+                df_dummy <- as.data.frame(predict(dummy_vars, df))
+    
+                # Partial correlation test
+                set.seed(555)
+                pcor = pcor.test(x = df[,taxa], y = df[,gene], z = df_dummy, method="spearman")
+                
+                res$par.spearman.rho[rownames(res) == taxa] = pcor$estimate
+                res$par.spearman.p.value[rownames(res) == taxa] = pcor$p.value
+    
+                      
+                # Save results
+                res <- res %>%
+                  mutate(Tissue = tissue, Group = group, Rank = rank, Timepoint = timepoint, Taxa = taxa, Gene = gene, contrast = rownames(res)) %>%
+                  left_join(da %>% dplyr::select(4:18), by = "Taxa")
+    
+                stats <- bind_rows(stats, res)
+              }
+              
+            }
+          } else {
+            
+          }
+        } else {
+          
+        }
+  
+      }, error = function(e) {
+          message(paste("Error:",tissue,group,timepoint, ":", e$message))
+      })
+    }
+  } 
+}
+beep()
+
+# Save results
+TaxvEnrichGenes = stats
+
+tissue = "VAT"
+
+# Correct p-values per facet (within each Type, Group and Timepoint)
+df = TaxvEnrichGenes[0,]
+for (tissue in unique(TaxvEnrichGenes$Tissue)) {
+  for (group in unique(TaxvEnrichGenes$Group)) {
+    for (timepoint in unique(TaxvEnrichGenes$Timepoint)) {
+      df_ = subset(TaxvEnrichGenes, Tissue == tissue & Group == group & Timepoint == timepoint & !(contrast %in% c("(Intercept)", "SexFemale")))
+      
+      # Apply p-value correction
+      df_$LMM.fdr.facet <- p.adjust(df_$p.value, method = "fdr")
+      df_$par.spearman.fdr.facet <- p.adjust(df_$par.spearman.p.value, method = "fdr")
+      df_$spearman.fdr.facet <- p.adjust(df_$spearman.p.value, method = "fdr")
+      
+      # Save 
+      df = rbind(df,df_)
+    }
+  }
+}
+TaxvEnrichGenes = df
+
+# Export associations
+write_xlsx(TaxvEnrichGenes, paste0(wd,"/Assoc_Taxa_EnrichGenes.xlsx"))
+    
+```
+
+# GM & Behavior
+
+## Abundance
+Investigate associations between the abundance of stressor-associated species and host behavior, after accounting for the effect of the stress treatments.
+
+```{r assoc species abundance w behavior}
+
+# Data frame to save results
+stats <- data.frame(
+    Phenotype = factor(),
+    Group = factor(),
+    Rank = factor(),
+    Timepoint = factor(),
+    Taxa = character(),
+    contrast = factor()
+)
+
+
+timepoint = "T5"
+group = "TMT"
+pheno = behav_pheno[4]
+
+# Starting phyloseq object
+rank = "MAG_ID"
+ps_ <- tax_glom(ps_SGB[["raref"]], taxrank = rank)
+
+for (pheno in c("Center_occupancy",  "Grooming_duration", "Social_preference")) {
+  for (group in c("TMT", "Housing")) {
+    for (timepoint in list("T4", "T5")) {
+      tryCatch({
+       
+        # Subset by timepoint
+        ps <- subset_samples(ps_, Timepoint == timepoint)
+  
+        # CLR transform data
+        ## Note that small pseudocount of min(relative abundance)/2 is added to zeroes
+        ps_clr <- microbiome::transform(ps, 'clr')
+  
+        # Extract abundance taxa
+        ft = (as.data.frame(t(otu_table(ps_clr))))
+        colnames(ft) = tax_table(ps_clr)[,rank]
+            
+        # Remove the last 3 characters to create Mouse_ID
+        ft$Mouse_ID <- substr(rownames(ft), 1, nchar(rownames(ft)) - 3)
+            
+              
+        # Merge transcriptomic and taxonomic data
+        df = merge(behav_df, ft, by = "Mouse_ID")
+              
+              
+        # Get DA species
+        da = subset(Deseq_df, Group == group & Timepoint == timepoint & diffexpressed != "NO")
+        colnames(da)[4] = "Taxa"
+          
+        # Loop through each microbial taxa
+        for (taxa in unique(da$Taxa)) {
+
+            ## Linear mixed effects model
+            formula <- formula(paste0(pheno," ~ ", taxa, "+ (1|Treatment)"))
+            set.seed(555)
+            model = lmer(formula, data = df)
+            res <- as.data.frame(summary(model)[["coefficients"]])
+
+            # Get R2 from LMM
+            rsq = rsq.lmm(model,adj=FALSE)
+            res$rsq.fixed = rsq$fixed
+            colnames(res)[1:5] = c("estimate", "SE", "df", "t.ratio", "p.value")
+            
+            ## Full correlation
+            set.seed(555)
+                
+            # Get Spearman's Rho
+            spearman_corr <- cor(df[, taxa], df[, pheno], method = "spearman")
+
+            # Get the p-value
+            spearman_test <- cor.test(df[, taxa], df[, pheno], method = "spearman")
+                
+            # Store the Spearman correlation and p-value
+            res$spearman.rho <- spearman_corr
+            res$spearman.p.value <- spearman_test$p.value
+
+
+            ## Partial correlation
+
+            # Convert categorical variables into dummy numerical values
+            dummy_vars <- dummyVars(formula(paste0(" ~ Treatment")), data = df)
+            set.seed(555)
+            df_dummy <- as.data.frame(predict(dummy_vars, df))
+
+            # Partial correlation test
+            pcor = pcor.test(x = df[,taxa], y = df[,pheno], z = df_dummy, method="spearman")
+            
+            res$par.spearman.rho[rownames(res) == taxa] = pcor$estimate
+            res$par.spearman.p.value[rownames(res) == taxa] = pcor$p.value
+
+                  
+            # Save results
+            res <- res %>%
+              mutate(Phenotype = pheno, Group = group, Rank = rank, Timepoint = timepoint, Taxa = taxa, contrast = rownames(res)) %>%
+              left_join(da %>% dplyr::select(4:18), by = "Taxa")
+
+            stats <- bind_rows(stats, res)
+
+          }
+            
+      }, error = function(e) {
+        message(paste("Error fitting model for", pheno, "and", group, ":", e$message))
+      })
+    }
+  }
+}
+beep()
+
+# Save results
+TaxvBehavior = stats
+
+# Correct p-values per facet (within each Type, Group and Timepoint)
+df = TaxvBehavior[0,]
+for (pheno in unique(TaxvBehavior$Phenotype)) {
+  for (group in unique(TaxvBehavior$Group)) {
+    for (timepoint in unique(TaxvBehavior$Timepoint)) {
+      df_ = subset(TaxvBehavior, Phenotype == pheno & Group == group & Timepoint == timepoint & !(contrast %in% c("(Intercept)", "SexFemale")))
+      
+      # Apply p-value correction
+      df_$LMM.fdr.facet <- p.adjust(df_$p.value, method = "fdr")
+      df_$par.spearman.fdr.facet <- p.adjust(df_$par.spearman.p.value, method = "fdr")
+      df_$spearman.fdr.facet <- p.adjust(df_$spearman.p.value, method = "fdr")
+      
+      # Save 
+      df = rbind(df,df_)
+    }
+  }
+}
+TaxvBehavior = df
+
+# Export associations
+write_xlsx(TaxvBehavior, paste0(wd,"/Assoc_Taxa_Behavior.xlsx"))
+
+
+```
+
+## Feature Importance
+Assess whether the consistently stress-associated SGBs (DA at both D22 and D30) are also important features to predict host phenotypes.
+
+```{r feature importance}
+
+# Start dataframe to store results
+stats = data.frame(
+  Group = factor(),
+  Timepoint = factor(),
+  Phenotype = factor(),
+  Variable = factor()
+)
+DA_SGB_summary = stats
+
+feat_imp_barplots = list()
+feat_imp_boxplots = list()
+
+pheno = "Behavior"
+var = "Grooming_duration"
+timepoint = "T4"
+group = "Housing"
+
+for (pheno in c("Behavior", "VAT", "Adr")) {
+  for (timepoint in c("T4", "T5")) {
+    
+    # Find taxa that are DA at both T4 and T5
+    da = subset(Deseq_df, diffexpressed != "NO")
+      
+    da$Enrich_group <- ifelse(da$Group == "Housing" & da$diffexpressed == "DOWN", "Pair", 
+                                ifelse(da$Group == "Housing" & da$diffexpressed == "UP", "Single",
+                                ifelse(da$Group == "TMT" & da$diffexpressed == "DOWN", "H2O", "TMT")))
+      
+    da_wide <- da %>%
+        group_by(Group) %>%
+        dplyr::select(MAG_ID, Timepoint, Enrich_group) %>%
+        pivot_wider(names_from = Timepoint, values_from = Enrich_group, names_prefix = "Enrich_")
+      
+    da_wide$Same_DA = ifelse(da_wide$Enrich_T4 == da_wide$Enrich_T5, TRUE, FALSE)
+    da_taxa_df = subset(da_wide, Same_DA == TRUE)
+    
+    
+    # Import feature importance tables
+    imp = read.csv(paste0(wd,"/new_mb_pheno/",pheno,"_",timepoint,"/RF_important_features_",timepoint,".csv"))
+    
+    for (var in unique(imp$Phenotype)) {
+      
+      # Subset by correct phenotype variable
+      imp_s = subset(imp, Phenotype == var)
+      
+      for (group in c("TMT", "Housing")) {
+        
+        # Log transform importance to approximate normality
+        imp_s$logImportance = log10(imp_s$Importance + 1e-6)
+        
+        # Shift all values so that the most negative value becomes 0, and then reverse the sign
+        imp_s$logImportance_t = (imp_s$logImportance - min(imp_s$logImportance))
+        
+        
+        # Get DA taxa for each group
+        da_taxa_df_s = subset(da_taxa_df, Group == group)
+        da_taxa = unique(da_taxa_df_s$MAG_ID)
+        
+        imp_s$DA_status = ifelse(imp_s$MAG_ID %in% da_taxa, "DA Taxa", "Non-DA Taxa")
+        
+        
+        ### Summarize importance for each SGB
+        # Rank features by importance (higher values = higher rank)
+        imp_s = imp_s %>%
+          mutate(
+            Rank = row_number(),  # Assign rank
+            Top_Half = Rank <= (n() / 2)  # Check if in top half
+          )
+        
+        # Filter only DA SGBs
+        da_summary = imp_s %>%
+          filter(DA_status == "DA Taxa") %>%
+          dplyr::select(MAG_ID, Importance, logImportance_t, Rank, Top_Half) %>%
+          mutate(Group = group,
+                 Timepoint = timepoint,
+                 Phenotype = pheno,
+                 Variable = var) %>%
+          relocate(Group, Timepoint, Phenotype, Variable)  # Move new columns to the left
+        DA_SGB_summary = rbind(DA_SGB_summary, da_summary)
+        
+        
+        ## Bar plot
+        
+        # Calculate top-most important feature
+        top_feature <- imp_s$MAG_ID[imp_s$Rank == 1]
+        
+        # Calculate median Importance
+        median_importance <- median(imp_s$logImportance_t, na.rm = TRUE)
+        
+        # Order SGBs
+        if (group == "TMT") {
+          sgbs = c("SGB051", "SGB002", "SGB074", "SGB105", "SGB107", "SGB108", "SGB158")
+        } else {
+          sgbs = c("SGB006", "SGB019", "SGB067", "SGB070", "SGB097", "SGB123", "SGB161", "SGB158")
+        }
+        
+        # Reorder the MAG_ID column based on custom order of SGBs
+        da_summary$MAG_ID <- factor(da_summary$MAG_ID, levels = rev(sgbs))
+        
+        
+        # Create horizontal bar plot
+        p = ggplot(da_summary, aes(x = logImportance_t, y = MAG_ID, fill = Top_Half)) #reorder(MAG_ID, logImportance_t)
+        p = p + geom_bar(stat = "identity", width=0.5, show.legend = FALSE)
+        p = p + geom_text(aes(label = Rank), hjust = -0.25, color = "grey25", size = 5)  # Annotate with rank
+        p = p + scale_fill_manual(values = c("grey50", "steelblue"))
+        p = p + labs(title = "", x = expression(Log[10]~"(SGB Gini Importance)" - "min("-Log[10]~"(SGB Gini Importance))"), y = "")
+        
+        # Add vertical line for top feature
+        p = p + geom_vline(xintercept = imp_s$logImportance_t[imp_s$MAG_ID == top_feature], 
+                     linetype = "solid", color = "grey50")
+        p = p + annotate("text", x = imp_s$logImportance_t[imp_s$MAG_ID == top_feature], 
+                   y = nrow(da_summary) + 1, label = paste("Top feature:", top_feature), 
+                   color = "grey25", hjust = 1, size = 5)
+        
+        # Add vertical line for median Importance
+        p = p + geom_vline(xintercept = median_importance, linetype = "dashed", color = "grey50")
+        p = p + annotate("text", x = median_importance, 
+                 y = nrow(da_summary) + 1, label = paste("Median Importance"), 
+                 color = "grey25", hjust = 1, size = 5)
+        p = p + expand_limits(y = nrow(da_summary) + 2)  # Extend y-axis limits to avoid clipping
+        p = p + theme_minimal()
+        p = p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5),
+                axis.text=element_text(size=18),
+                axis.title=element_text(size=20)
+              )
+        p
+
+        # Save plot
+        feat_imp_barplots[[group]][[timepoint]][[pheno]][[var]] = p
+        
+        
+        ### Test if DA taxa are in the top half most important features ####
+        
+        # Split into top and bottom halves
+        median_rank = nrow(imp_s) / 2
+        top_half = imp_s[1:median_rank, ]
+        bottom_half = imp_s[(median_rank + 1):nrow(imp_s), ]
+        
+        # Identify DA taxa in the top and bottom halves
+        top_DA = sum(top_half$MAG_ID %in% da_taxa)
+        bottom_DA = sum(bottom_half$MAG_ID %in% da_taxa)
+        
+        # Identify non-DA taxa in the top and bottom halves
+        top_nonDA = nrow(top_half) - top_DA
+        bottom_nonDA = nrow(bottom_half) - bottom_DA
+        
+        # Create a 2x2 contingency table
+        contingency_table = matrix(
+          c(top_DA, bottom_DA, top_nonDA, bottom_nonDA),
+          nrow = 2,
+          byrow = TRUE
+        )
+        
+        rownames(contingency_table) = c("DA", "Non-DA")
+        colnames(contingency_table) = c("Top Half", "Bottom Half")
+        
+        # Perform Fisher’s Exact Test
+        fisher_test = fisher.test(contingency_table)
+        
+        # Perform Chi-square test (alternative for large datasets)
+        chi_test = chisq.test(contingency_table)
+        
+        
+        
+        ### Test if DA taxa on average more important than others ####
+        
+        # Subset importance values
+        da_importance = imp_s$Importance[imp_s$MAG_ID %in% da_taxa]
+        non_da_importance = imp_s$Importance[!imp_s$MAG_ID %in% da_taxa]
+        
+        # Perform Wilcoxon rank-sum test (non-parametric)
+        wilcox_test = wilcox.test(da_importance, non_da_importance)
+        
+        
+        
+        # Box plot
+        p = ggplot(imp_s, aes(x = DA_status, y = logImportance))
+        p = p + geom_boxplot(aes(fill = DA_status), alpha = 0.75, width=0.15, show.legend = F,outlier.shape = NA)
+        p = p + geom_point(aes(fill = DA_status), shape=21, size=2, alpha=0.5, position="jitter", show.legend=F)
+        p <- p + stat_compare_means(label = "p.format", method = "wilcox.test")
+        p = p + labs(title = "",x = "", y = expression(-Log[10]~"(SGB Gini Importance)"))
+        p = p + theme(legend.position = "none")
+        p = p + scale_fill_manual(values = c(get(paste0(group, "_color_pal"))[[2]], "gray50"))
+        p = p + theme(
+                panel.background = element_rect(fill = "transparent",colour = NA),
+                plot.background = element_rect(fill = "transparent",colour = NA),
+                legend.background = element_rect(fill = "transparent",colour = NA),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                legend.key = element_rect(fill = "transparent",colour = NA),
+                axis.line = element_line(color = "gray50"),
+                axis.text.x = element_text(angle = 0, hjust = 0.5))
+        p
+        
+        # Save plot
+        feat_imp_boxplots[[group]][[timepoint]][[pheno]][[var]] = p
+        
+        
+        # Save results
+        res = data.frame(
+          Group = group,
+          Timepoint = timepoint,
+          Phenotype = pheno,
+          Variable = var,
+          Fisher.p.value = fisher_test$p.value,
+          Chi.sq.p.value = chi_test$p.value,
+          Wilcox.p.value = wilcox_test$p.value
+        )
+        stats = rbind(stats,res)
+        
+      }
+    }
+  }
+}
+beep()
+
+# Export results
+write_xlsx(DA_SGB_summary, paste0(wd,"/Microbiome/Feature_Importance_mb_pheno_summary.xlsx"))
+write_xlsx(stats, paste0(wd,"/Microbiome/Feature_Importance_mb_pheno_stats.xlsx"))
+
+# Export the figure
+pheno = "Behavior"
+var = "Social_preference"
+timepoint = "T4"
+group = "TMT"
+
+pdf(paste0(wd, "/Microbiome/DA_SGB_Importance_",group,"_",timepoint,"_",pheno,"_",var,".pdf"), width=6, height=4)
+print(feat_imp_barplots[[group]][[timepoint]][[pheno]][[var]])
+while (!is.null(dev.list()))  dev.off()
+
+
+```
+
+# Associations Summary Figure
+Code used to produce Figure 3, showing the correlation between stress-associated taxa and host phenotypes.
+
+```{r Associations Summary Figure}
+
+rank = "MAG_ID"
+
+
+#### Make a heatmap of associations between DA taxa and host phenotypes ####
+
+# Get phenotypic data ####
+
+## Behavioral associations
+TaxvBehavior = read_excel(paste0(wd,"/Assoc_Taxa_Behavior.xlsx"))
+behav = TaxvBehavior
+behav = subset(behav, Rank == rank)
+
+# Add phenotype type
+behav$Type = "Behavior"
+behav$Phenotype = gsub("_", " ", behav$Phenotype)
+behav$Phenotype <- str_to_title(behav$Phenotype)
+behav$Phenotype = gsub(" ", "\n", behav$Phenotype)
+behav$Phenotype = factor(behav$Phenotype, levels = rev(c("Center\nOccupancy", "Grooming\nDuration", "Social\nPreference")))
+
+
+## Transcriptomic associations
+TaxvEnrichGenes = read_excel(paste0(wd,"/Assoc_Taxa_EnrichGenes.xlsx"))
+trans = TaxvEnrichGenes
+colnames(trans)[1] = "Type"
+colnames(trans)[6] = "Phenotype"
+
+
+#### Merge behavioral and transcriptomic data ####
+
+bt_df = rbind(behav, trans)
+
+# Add gene types
+go_bp = GO_enrich[["VAT"]][["TMT"]][["na"]]@result
+          
+# Antimicrobial genes
+amps = go_bp %>%
+  filter(ID == "GO:0061844") %>%
+  pull(geneID)  # Extract the Gene column
+amps <- strsplit(amps, "/")[[1]] 
+          
+# Endocrine
+end = go_bp %>%
+  filter(ID == "GO:0035270") %>%
+  pull(geneID)  # Extract the Gene column
+end <- strsplit(end, "/")[[1]]
+
+bt_df_ = bt_df
+bt_df_$Type = ifelse(bt_df$Phenotype %in% amps, "AMPs", ifelse(bt_df$Phenotype %in% setdiff(end,amps), "Endocrine","Behavior"))
+bt_df = bt_df_
+
+# Define order
+bt_df$Type = factor(bt_df$Type, levels = c("AMPs", "Endocrine", "Behavior"))
+
+
+bt_df$Enrich_group <- ifelse(bt_df$Group == "Housing" & bt_df$diffexpressed == "DOWN", "Pair", 
+                          ifelse(bt_df$Group == "Housing" & bt_df$diffexpressed == "UP", "Single",
+                          ifelse(bt_df$Group == "TMT" & bt_df$diffexpressed == "DOWN", "H2O", "TMT")))
+
+## Group
+bt_df$Group = gsub("TMT", "Predator Odor", bt_df$Group)
+bt_df$Group = gsub("Housing", "Social Isolation", bt_df$Group)
+bt_df$Group = factor(bt_df$Group, levels = c("Predator Odor", "Social Isolation"))
+
+## Timepoint
+bt_df$Timepoint = gsub("T4", "D22", bt_df$Timepoint)
+bt_df$Timepoint = gsub("T5", "D30", bt_df$Timepoint)
+
+
+# Add significance levels based on p-values
+bt_df$Significance <- cut(bt_df$par.spearman.fdr.facet, 
+                        breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+                        labels = c("5", "4", "3", "1")) # Assign as character
+
+bt_df$Significance <- as.numeric(as.character(bt_df$Significance))
+
+
+# Export table
+write_xlsx(bt_df, paste0(wd,"/Microbiome/Assoc_DA_Taxa_w_Behav_EnrichGenes.xlsx"))
+
+
+
+# Find taxa that are DA at both T4 and T5
+df = subset(Deseq_df, diffexpressed != "NO")
+
+df$Enrich_group <- ifelse(df$Group == "Housing" & df$diffexpressed == "DOWN", "Pair", 
+                          ifelse(df$Group == "Housing" & df$diffexpressed == "UP", "Single",
+                          ifelse(df$Group == "TMT" & df$diffexpressed == "DOWN", "H2O", "TMT")))
+df_wide <- df %>%
+  group_by(Group) %>%
+  dplyr::select(MAG_ID, Timepoint, Enrich_group) %>%
+  pivot_wider(names_from = Timepoint, values_from = Enrich_group, names_prefix = "Enrich_")
+
+df_wide$Same_DA = ifelse(df_wide$Enrich_T4 == df_wide$Enrich_T5, TRUE, FALSE)
+df_wide_s = subset(df_wide, Same_DA == TRUE)
+df_wide_s = merge(df_wide_s,SGB_tt, by = "MAG_ID")
+
+# Export table
+write_xlsx(df_wide_s, paste0(wd,"/Microbiome/Consistently_DA_SGBs.xlsx"))
+
+
+# Plot TMT and SI separately
+bt_df_ = subset(bt_df, Taxa %in% df_wide_s$MAG_ID & Type != "Endocrine")
+
+# Export table
+write_xlsx(bt_df_, paste0(wd,"/Microbiome/TS9_Associations_SGBs_host.xlsx"))
+
+
+# Plot TMT and SI separately
+bt_df_ = subset(bt_df, Group == "Predator Odor" & Taxa %in% df_wide_s$MAG_ID[df_wide_s$Group == "TMT"] & Type != "Endocrine")
+
+#sort(unique(bt_df_$Phenotype))
+bt_df_$Phenotype <- factor(bt_df_$Phenotype, levels = rev(c("Reg1", "Dmbt1", "Reg3d", "Pla2g1b", "Reg3b", "Reg2",                                                   "Center\nOccupancy", "Grooming\nDuration", "Social\nPreference")))
+
+
+# Correct p-values per facet (within each Type, Group and Timepoint)
+df = bt_df_[0,]
+for (type in unique(bt_df_$Type)) {
+  for (group in unique(bt_df_$Enrich_group)) {
+    for (timepoint in unique(bt_df_$Timepoint)) {
+      df_ = subset(bt_df_, Type == type & Enrich_group == group & Timepoint == timepoint & !(contrast %in% c("(Intercept)", "SexFemale")))
+      
+      # Apply p-value correction
+      df_$LMM.fdr.facet <- p.adjust(df_$p.value, method = "fdr")
+      df_$par.spearman.fdr.facet <- p.adjust(df_$par.spearman.p.value, method = "fdr")
+      df_$spearman.fdr.facet <- p.adjust(df_$spearman.p.value, method = "fdr")
+      
+      # Save 
+      df = rbind(df,df_)
+    }
+  }
+}
+bt_df_ = df
+
+# Add significance levels based on p-values
+bt_df_$Significance <- cut(bt_df_$par.spearman.fdr.facet, 
+                        breaks = c(-Inf, 0.001, 0.01, 0.05, Inf),
+                        labels = c("5", "4", "3", "1")) # Assign as character
+
+bt_df_$Significance <- as.numeric(as.character(bt_df_$Significance))
+
+bt_df_T5 = subset(bt_df_, Timepoint == "D30")
+
+
+# Plot associations
+p = ggplot(bt_df_T5, aes(x = Taxa, y = Phenotype)) +
+    geom_point(aes(fill = par.spearman.rho, stroke = Significance), size = 9, shape = 21, color = "gray40") +
+    scale_fill_gradientn(colors = brewer.pal(9, "RdYlBu"), limits = c(-max(abs(bt_df$par.spearman.rho)), max(abs(bt_df$par.spearman.rho))), name = "Spearman's Rho") + 
+    continuous_scale("stroke", scale_name = "FDR p-value", 
+                 palette = scales::rescale_pal(c(1, 4)),
+                 breaks = c(1, 2, 3, 4), labels = c("NS", "<0.05", "<0.01", "<0.001")) +
+    facet_grid(rows = vars(Type), cols=vars(Enrich_group), scales = "free") +  # Facet by row
+    labs(title = "", x = "", y = "Host Phenotypes") +
+    scale_x_discrete(position = "top") + # x-axis at the top
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 25, hjust = 0, vjust = 1, size = 22),  # 45-degree italic labels
+                #axis.title.x = element_blank(),  # Remove x-axis title
+                #axis.ticks.x = element_blank(),  # Remove x-axis ticks
+                axis.text.y = element_text(size = 22),  # Increase y-axis label size
+                axis.title.x.top = element_blank(), #element_text(size = 24, face = "bold"), # Adjust title size if needed
+                axis.title.y = element_text(size = 26, face = "bold"),  # Adjust y-axis title size
+                legend.title = element_text(size = 22, face = "bold"),  # Increase legend title size
+                legend.text = element_text(size = 22),  # Increase legend text size
+                strip.placement = "outside",  # Place facet labels above x-axis
+                strip.text = element_text(size = 24, face = "bold"), #strip.text = element_blank(), #
+                panel.background = element_rect(fill = NA, color = "gray50", size = 0.75),
+                panel.grid.major = element_line(color = "gray85", size = 0.25),
+                panel.grid.minor = element_line(color = "gray", size = 0.25),
+                plot.margin = unit(c(0, 1, 1, 1), "cm")  # Set margin in cm (top, right, bottom, left)
+          )
+p
+        
+
+# Export the combined figure
+pdf(paste0(wd, "/Microbiome/Fig_TMT_Summary_Heatmap_DA_SGBs_EnrichGenes_fdr_facet_T5.pdf"), width = 15, height = 9)
+print(p)
+while (!is.null(dev.list()))  dev.off()
+
+
+```
