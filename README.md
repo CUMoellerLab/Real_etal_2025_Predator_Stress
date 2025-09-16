@@ -10,8 +10,8 @@ Gut metagenomic and visceral adipose tissue (VAT) transcriptomic sequence data c
 ## Metagenomic_data_processing.sh
 **Bash script** used to quality control, assemble, and bin **gut metagenomic reads** into metagenome-assembled genomes (MAGs) using [MAGmaker](https://github.com/CUMoellerLab/sn-mg-pipeline), our lab's custom made snakemake pipeline. Outputs can be used in **Real_2025_analyses.Rmd** for further analyses.
 
-## Data_analyses.Rmd
+## Stress_analyses.Rmd
 **R markdown** file with code used to produce the figures and tables included in Real et al. 2025.
 
 ## RF_predict_phenotypes.py & RF_wrapper.sh
-Use the **bash script wrapper** to run a **Python script** that uses **random forest models** to quantify the predictive power of the gut microbiota or the VAT transcriptome in regards to host behavior. Outputs can be used in **Data_analyses.Rmd** for further analyses.
+Use the **bash script wrapper** to run a **Python script** that uses **random forest models** to quantify the predictive power of the gut microbiota or the VAT transcriptome in regards to host behavior. Outputs can be used in **Stress_analyses.Rmd** for further analyses.
